@@ -25,6 +25,31 @@ The agent becomes your guardrail — not your enabler.
 
 ## Quick Start
 
+### Option A: Automated install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/teseo/human.md/main/install.sh | bash
+```
+
+Or clone and install locally:
+
+```bash
+git clone https://github.com/teseo/human.md.git
+cd human.md
+./install.sh
+```
+
+The installer will:
+- Detect your runtime (Python, Node, Bun, or Deno)
+- Install the guard to `~/.claude/human-guard/`
+- Register a `PreToolUse` hook in `~/.claude/settings.json`
+- Add a shell wrapper to your `.zshrc` or `.bashrc`
+- Walk you through creating a `~/.claude/human.md` if you don't have one
+
+After installing, restart your shell (or `source ~/.zshrc` / `source ~/.bashrc`).
+
+### Option B: Manual (soft enforcement only)
+
 Copy the basic template into your repo:
 
 ```bash
@@ -41,7 +66,7 @@ outside the allowed schedule, inform the operator and do not proceed
 with engineering work.
 ```
 
-That's it. Claude Code will now check your boundaries before working with you.
+This relies on the agent respecting the file voluntarily. For enforcement that can't be overridden, use Option A.
 
 ## Example
 
@@ -74,9 +99,37 @@ enforcement: soft
 
 See [examples/](examples/) for more configurations and [spec/SPEC.md](spec/SPEC.md) for the full specification.
 
+## Two Layers of Enforcement
+
+When installed with `install.sh`, human-guard enforces boundaries at two levels:
+
+```text
+  you type "claude"
+        │
+        ▼
+  ┌─────────────┐     outside hours?     ┌──────────────┐
+  │ Shell        │ ──────────────────────▶│ Session      │
+  │ Wrapper      │     blocked period?    │ blocked.     │
+  │ (pre-start)  │                        │ Message.     │
+  └──────┬───────┘                        └──────────────┘
+         │ ok
+         ▼
+  ┌─────────────┐
+  │ Claude Code  │
+  │ session      │◀──── hook checks every tool use
+  └──────┬───────┘      (session limit, wind-down,
+         │               blocked period, outside hours)
+         ▼
+  session ends → logged
+```
+
+- **Wrapper** (pre-start): Checks the schedule *before* launching Claude. If you're outside hours or in a blocked period, Claude never starts. Also tracks session duration and enforces breaks.
+
+- **Hook** (mid-session): A `PreToolUse` hook that runs on every tool call *during* a session. Catches schedule changes that happen while you're working (e.g., blocked period starts, session time limit reached, wind-down time).
+
 ## Enforcement Levels
 
-- **`soft`** (default): The agent reads `human.md`, checks the time, and verbally enforces the boundaries. It will tell you it's outside your working hours and decline to proceed with engineering work. You *can* override it, but the friction is intentional.
+- **`soft`** (default): The wrapper prevents launching outside hours. The hook injects system messages and can block tool use. You *can* force-start with the wrapper, but the friction is intentional.
 
 - **`advisory`**: The agent mentions the boundaries but proceeds if you insist. A gentler mode for those who want awareness without hard stops.
 
@@ -100,13 +153,29 @@ For the full story, see [docs/WHY.md](docs/WHY.md).
 
 See [docs/INTEGRATION.md](docs/INTEGRATION.md) for detailed integration patterns.
 
+## Requirements
+
+- **[jq](https://jqlang.github.io/jq/download/)** — for JSON manipulation during install and in the hook
+- **One of:** Python 3.9+, Node 18+, Bun, or Deno — the installer auto-detects and picks the best available
+- **Shell:** zsh or bash
+
+## Uninstalling
+
+```bash
+./uninstall.sh
+```
+
+This removes the guard files, hook registration, and shell wrapper line. Your `human.md` and session logs are preserved.
+
 ## Roadmap
 
 - [x] Specification v1.0
 - [x] Specification v1.1 — blocked periods, wind-down
 - [x] Basic examples and templates
 - [x] Global `human.md` support (`~/.claude/human.md`)
-- [ ] Wrapper script for hard enforcement
+- [x] Shell wrapper + hook enforcement
+- [x] Multi-runtime support (Python, Node, Bun, Deno)
+- [x] One-command installer with interactive wizard
 - [ ] IDE extensions (VS Code, JetBrains)
 - [ ] Native support in AI coding agents (the goal)
 
