@@ -1,4 +1,4 @@
-"""Tests for guard/core.py — TDD for human-guard distribuible.
+"""Tests for guard/core.py — TDD for human-guard distributable.
 
 Tests time checking, session logging, the full --check flow, and the inline YAML parser.
 All times use Europe/London timezone to match the real human.md config.
@@ -16,7 +16,6 @@ import pytest
 
 # Import guard module from repo
 GUARD_PATH = Path(__file__).resolve().parent.parent / "guard" / "core.py"
-sys.path.insert(0, str(GUARD_PATH.parent))
 
 
 # ---------------------------------------------------------------------------
