@@ -47,7 +47,7 @@ That's it. Claude Code will now check your boundaries before working with you.
 
 ```yaml
 # human.md
-version: "1.0"
+version: "1.1"
 framework: human-md
 
 operator:
@@ -57,8 +57,13 @@ operator:
 schedule:
   allowed_hours:
     start: "09:00"
-    end: "22:00"
-  blocked_days: ["Sunday"]
+    end: "00:00"
+  blocked_periods:
+    - name: "family"
+      start: "18:00"
+      end: "21:00"
+  wind_down:
+    start: "23:30"
 
 sessions:
   max_continuous_minutes: 150
@@ -98,8 +103,9 @@ See [docs/INTEGRATION.md](docs/INTEGRATION.md) for detailed integration patterns
 ## Roadmap
 
 - [x] Specification v1.0
+- [x] Specification v1.1 — blocked periods, wind-down
 - [x] Basic examples and templates
-- [ ] Global `human.md` support (`~/.claude/human.md`)
+- [x] Global `human.md` support (`~/.claude/human.md`)
 - [ ] Wrapper script for hard enforcement
 - [ ] IDE extensions (VS Code, JetBrains)
 - [ ] Native support in AI coding agents (the goal)
