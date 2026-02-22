@@ -28,13 +28,13 @@ The agent becomes your guardrail — not your enabler.
 ### Option A: Automated install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/teseo/human.md/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/human.md/main/install.sh | bash
 ```
 
 Or clone and install locally:
 
 ```bash
-git clone https://github.com/teseo/human.md.git
+git clone https://github.com/thellmwhisperer/human.md.git
 cd human.md
 ./install.sh
 ```

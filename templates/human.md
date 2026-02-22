@@ -1,7 +1,7 @@
 # human.md
 # Place this file in your repository root or globally at ~/.claude/human.md
 # Add to your CLAUDE.md: "This project adheres to the human.md framework."
-# Full spec: https://github.com/teseo/human.md/blob/main/spec/SPEC.md
+# Full spec: https://github.com/thellmwhisperer/human.md/blob/main/spec/SPEC.md
 
 version: "1.1"
 framework: human-md

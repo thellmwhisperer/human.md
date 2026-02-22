@@ -24,9 +24,9 @@ echo ""
 
 # 1. Remove hook from settings.json
 if [ -f "$SETTINGS" ] && jq empty "$SETTINGS" 2>/dev/null; then
-  HOOK_COUNT=$(jq '[.hooks.PreToolUse // [] | .[].hooks[]?.command // "" | select(contains("human-guard"))] | length' "$SETTINGS" 2>/dev/null || echo 0)
+  HOOK_COUNT=$(jq '[.hooks.PreToolUse // [] | .[].hooks[]?.command // "" | select(contains("human-guard/hook.sh"))] | length' "$SETTINGS" 2>/dev/null || echo 0)
   if [ "$HOOK_COUNT" -gt 0 ]; then
-    jq '.hooks.PreToolUse = [.hooks.PreToolUse[] | .hooks = [.hooks[] | select(.command | contains("human-guard") | not)] | select(.hooks | length > 0)]' "$SETTINGS" > "$SETTINGS.tmp"
+    jq '.hooks.PreToolUse = [.hooks.PreToolUse[] | .hooks = [.hooks[] | select(.command | contains("human-guard/hook.sh") | not)] | select(.hooks | length > 0)]' "$SETTINGS" > "$SETTINGS.tmp"
     mv "$SETTINGS.tmp" "$SETTINGS"
     printf "  \033[0;32m✓\033[0m Hook removed from settings.json\n"
   else

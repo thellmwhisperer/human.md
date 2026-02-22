@@ -128,7 +128,7 @@ with engineering work.
 ### With Context
 ```markdown
 ## Human Framework
-This project adheres to the human.md framework (https://github.com/teseo/human.md).
+This project adheres to the human.md framework (https://github.com/thellmwhisperer/human.md).
 
 Before beginning any session:
 1. Read ./human.md (or ~/.claude/human.md)

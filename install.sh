@@ -12,7 +12,7 @@ if [ -f "$(dirname "$0")/guard/core.py" ]; then
   REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 else
   REPO_DIR=$(mktemp -d)
-  REPO_URL="https://raw.githubusercontent.com/teseo/human.md/main"
+  REPO_URL="https://raw.githubusercontent.com/thellmwhisperer/human.md/main"
   echo "Downloading files..."
   curl -fsSL "$REPO_URL/guard/core.py" -o "$REPO_DIR/core.py"
   curl -fsSL "$REPO_URL/guard/core.mjs" -o "$REPO_DIR/core.mjs"
@@ -151,7 +151,7 @@ if ! jq empty "$SETTINGS" 2>/dev/null; then
 fi
 
 # Check if hook already registered
-ALREADY_REGISTERED=$(jq -r "[.hooks.PreToolUse // [] | .[].hooks[]?.command // \"\" | select(contains(\"human-guard\"))] | length" "$SETTINGS" 2>/dev/null || echo 0)
+ALREADY_REGISTERED=$(jq -r "[.hooks.PreToolUse // [] | .[].hooks[]?.command // \"\" | select(contains(\"human-guard/hook.sh\"))] | length" "$SETTINGS" 2>/dev/null || echo 0)
 
 if [ "$ALREADY_REGISTERED" -eq 0 ]; then
   # Backup before modifying
