@@ -44,6 +44,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install jq
-        run: sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq
       - name: Run E2E tests
         run: bash tests/test_install.sh

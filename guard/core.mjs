@@ -239,7 +239,7 @@ function loadConfig(configPaths) {
         return config;
       }
     } catch {
-      return null;
+      continue;
     }
   }
   return null;
@@ -671,9 +671,9 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--check': args.check = true; break;
       case '--start-session': args.startSession = true; break;
-      case '--end-session': args.endSession = argv[++i]; break;
+      case '--end-session': if (i + 1 < argv.length) args.endSession = argv[++i]; break;
       case '--force': args.force = true; break;
-      case '--dir': args.dir = argv[++i]; break;
+      case '--dir': if (i + 1 < argv.length) args.dir = argv[++i]; break;
     }
   }
   return args;

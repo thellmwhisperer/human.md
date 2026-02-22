@@ -151,7 +151,6 @@ if ! jq empty "$SETTINGS" 2>/dev/null; then
 fi
 
 # Check if hook already registered
-HOOK_CMD="~/.claude/human-guard/hook.sh"
 ALREADY_REGISTERED=$(jq -r "[.hooks.PreToolUse // [] | .[].hooks[]?.command // \"\" | select(contains(\"human-guard\"))] | length" "$SETTINGS" 2>/dev/null || echo 0)
 
 if [ "$ALREADY_REGISTERED" -eq 0 ]; then
@@ -274,10 +273,18 @@ except: pass
     while [ "$ADD_MORE" = "y" ] || [ "$ADD_MORE" = "Y" ]; do
       printf "    Period name: "
       read -r BP_NAME || BP_NAME="break"
-      printf "    Start (HH:MM): "
-      read -r BP_START || BP_START="12:00"
-      printf "    End (HH:MM): "
-      read -r BP_END || BP_END="13:00"
+      BP_START=""
+      while ! echo "$BP_START" | grep -qE '^([01][0-9]|2[0-3]):[0-5][0-9]$'; do
+        printf "    Start (HH:MM): "
+        read -r BP_START || BP_START="12:00"
+        [ -z "$BP_START" ] && BP_START="12:00"
+      done
+      BP_END=""
+      while ! echo "$BP_END" | grep -qE '^([01][0-9]|2[0-3]):[0-5][0-9]$'; do
+        printf "    End (HH:MM): "
+        read -r BP_END || BP_END="13:00"
+        [ -z "$BP_END" ] && BP_END="13:00"
+      done
       escaped_bp_name="$(yaml_escape "$BP_NAME")"
       BLOCKED_YAML="$BLOCKED_YAML
     - name: \"$escaped_bp_name\"

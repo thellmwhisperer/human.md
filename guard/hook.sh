@@ -22,20 +22,20 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< 
 
 # Check blocked periods
 if [ "$BP_COUNT" -gt 0 ] 2>/dev/null; then
-  for i in $(seq 0 $((BP_COUNT - 1))); do
-    BP_START=$(jq -r ".blocked_periods[$i].start_epoch" "$STATE")
-    BP_END=$(jq -r ".blocked_periods[$i].end_epoch" "$STATE")
+  BP_DATA=$(jq -r '.blocked_periods[] | "\(.start_epoch) \(.end_epoch)"' "$STATE" 2>/dev/null)
+  BP_MSG=$(jq -r '.messages.blocked_period // "Blocked period active."' "$STATE")
+  while read -r BP_START BP_END; do
+    [ -z "$BP_START" ] && continue
     if [ "$NOW" -ge "$BP_START" ] && [ "$NOW" -lt "$BP_END" ]; then
-      MSG=$(jq -r '.messages.blocked_period // "Blocked period active."' "$STATE")
       if [ "$ENFORCEMENT" = "soft" ]; then
-        printf '%s\n' "$MSG" >&2
+        printf '%s\n' "$BP_MSG" >&2
         exit 2
       else
-        jq -n --arg msg "$MSG" '{"systemMessage": $msg}'
+        jq -n --arg msg "$BP_MSG" '{"systemMessage": $msg}'
         exit 0
       fi
     fi
-  done
+  done <<< "$BP_DATA"
 fi
 
 # Check outside allowed hours

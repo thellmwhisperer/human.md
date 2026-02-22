@@ -46,7 +46,7 @@ The installer will:
 - Add a shell wrapper to your `.zshrc` or `.bashrc`
 - Walk you through creating a `~/.claude/human.md` if you don't have one
 
-After installing, restart your shell (or `source ~/.zshrc`).
+After installing, restart your shell (or `source ~/.zshrc` / `source ~/.bashrc`).
 
 ### Option B: Manual (soft enforcement only)
 
@@ -103,7 +103,7 @@ See [examples/](examples/) for more configurations and [spec/SPEC.md](spec/SPEC.
 
 When installed with `install.sh`, human-guard enforces boundaries at two levels:
 
-```
+```text
   you type "claude"
         │
         ▼

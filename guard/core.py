@@ -257,7 +257,7 @@ def load_config(config_paths):
                 if isinstance(config, dict) and config.get("framework") == "human-md":
                     return config
             except Exception:
-                return None
+                continue
     return None
 
 

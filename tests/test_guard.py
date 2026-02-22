@@ -108,13 +108,12 @@ def session_state_path(tmp_path):
 def _import_guard():
     """Import human_guard module. Skip all tests if it doesn't exist yet."""
     global human_guard
-    try:
-        import importlib
-        spec = importlib.util.spec_from_file_location("human_guard", GUARD_PATH)
-        human_guard = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(human_guard)
-    except Exception:
-        pytest.skip("guard/core.py not yet implemented")
+    import importlib
+    spec = importlib.util.spec_from_file_location("human_guard", GUARD_PATH)
+    if spec is None or spec.loader is None:
+        pytest.skip("guard/core.py not found")
+    human_guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(human_guard)
 
 
 # ===========================================================================
@@ -244,39 +243,39 @@ class TestYamlParser:
 class TestAllowedHours:
     """allowed_hours: start=09:00, end=00:00 (midnight = end of day)."""
 
-    def test_before_start_blocked(self, config_file):
+    def test_before_start_blocked(self):
         """08:59 → blocked."""
         fake_now = datetime(2026, 2, 22, 8, 59)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "blocked"
         assert result["reason"] == "outside_hours"
 
-    def test_at_start_ok(self, config_file):
+    def test_at_start_ok(self):
         """09:00 → ok."""
         fake_now = datetime(2026, 2, 22, 9, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "ok"
 
-    def test_midday_ok(self, config_file):
+    def test_midday_ok(self):
         """12:00 → ok (but skip if in blocked period)."""
         fake_now = datetime(2026, 2, 22, 12, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "ok"
 
-    def test_before_end_ok(self, config_file):
+    def test_before_end_ok(self):
         """17:30 → ok."""
         fake_now = datetime(2026, 2, 22, 17, 30)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "ok"
 
-    def test_at_midnight_blocked(self, config_file):
+    def test_at_midnight_blocked(self):
         """00:00 → blocked (end of allowed window)."""
         fake_now = datetime(2026, 2, 23, 0, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "blocked"
         assert result["reason"] == "outside_hours"
 
-    def test_deep_night_blocked(self, config_file):
+    def test_deep_night_blocked(self):
         """02:00 → blocked."""
         fake_now = datetime(2026, 2, 23, 2, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
@@ -287,13 +286,13 @@ class TestAllowedHours:
 class TestBlockedPeriods:
     """blocked_periods: family 18:00-21:00."""
 
-    def test_before_blocked_ok(self, config_file):
+    def test_before_blocked_ok(self):
         """17:59 → ok."""
         fake_now = datetime(2026, 2, 22, 17, 59)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "ok"
 
-    def test_at_blocked_start(self, config_file):
+    def test_at_blocked_start(self):
         """18:00 → blocked (family)."""
         fake_now = datetime(2026, 2, 22, 18, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
@@ -301,21 +300,21 @@ class TestBlockedPeriods:
         assert result["reason"] == "blocked_period"
         assert result["period_name"] == "family"
 
-    def test_mid_blocked(self, config_file):
+    def test_mid_blocked(self):
         """19:30 → blocked."""
         fake_now = datetime(2026, 2, 22, 19, 30)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "blocked"
         assert result["reason"] == "blocked_period"
 
-    def test_end_of_blocked(self, config_file):
+    def test_end_of_blocked(self):
         """20:59 → blocked."""
         fake_now = datetime(2026, 2, 22, 20, 59)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "blocked"
         assert result["reason"] == "blocked_period"
 
-    def test_after_blocked_ok(self, config_file):
+    def test_after_blocked_ok(self):
         """21:00 → ok."""
         fake_now = datetime(2026, 2, 22, 21, 0)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
@@ -325,19 +324,19 @@ class TestBlockedPeriods:
 class TestWindDown:
     """wind_down: start=23:30, ends at allowed_hours.end (00:00)."""
 
-    def test_before_wind_down_ok(self, config_file):
+    def test_before_wind_down_ok(self):
         """23:29 → ok."""
         fake_now = datetime(2026, 2, 22, 23, 29)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "ok"
 
-    def test_at_wind_down(self, config_file):
+    def test_at_wind_down(self):
         """23:30 → wind_down."""
         fake_now = datetime(2026, 2, 22, 23, 30)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
         assert result["status"] == "wind_down"
 
-    def test_during_wind_down(self, config_file):
+    def test_during_wind_down(self):
         """23:59 → wind_down."""
         fake_now = datetime(2026, 2, 22, 23, 59)
         result = human_guard.check_schedule(SAMPLE_CONFIG, fake_now)
