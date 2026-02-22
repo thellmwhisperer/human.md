@@ -94,9 +94,11 @@ test_install_idempotent() {
   local hook_count
   hook_count=$(jq '[.hooks.PreToolUse[].hooks[].command | select(contains("human-guard"))] | length' "$HOME/.claude/settings.json")
   [ "$hook_count" -eq 1 ]
-  local zsh_count
-  zsh_count=$(grep -cF 'human-guard/wrapper' "$HOME/.zshrc" || echo 0)
+  local zsh_count bash_count
+  zsh_count=$(grep -cF 'human-guard/wrapper' "$HOME/.zshrc" 2>/dev/null) || zsh_count=0
+  bash_count=$(grep -cF 'human-guard/wrapper' "$HOME/.bashrc" 2>/dev/null) || bash_count=0
   [ "$zsh_count" -le 1 ]
+  [ "$bash_count" -le 1 ]
 }
 
 test_install_preserves_existing_hooks() {
