@@ -1,7 +1,10 @@
-# human.md — Advanced Example
-# Full configuration showing all available options.
-# See spec/SPEC.md for detailed documentation of each field.
+# Example: Full Configuration
 
+A complete `human.md` showing all available options. This configuration models a real day with distinct blocks — work, family time, and personal coding — with a wind-down period before midnight and custom messages for each boundary event.
+
+See [spec/SPEC.md](../spec/SPEC.md) for detailed documentation of each field.
+
+```yaml
 version: "1.1"
 framework: human-md
 
@@ -41,3 +44,4 @@ messages:
     Step away, stretch, hydrate. The code isn't going anywhere.
   break_reminder: >
     Quick check — when was the last time you stood up?
+```

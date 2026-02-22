@@ -1,7 +1,10 @@
-# human.md — Basic Example
-# Minimal configuration with just working hours.
-# See spec/SPEC.md for all available options.
+# Example: Minimal Configuration
 
+A basic `human.md` with just working hours and session limits. This is the simplest useful configuration — define when you work, how long your sessions last, and let the agent handle the rest.
+
+See [spec/SPEC.md](../spec/SPEC.md) for all available options.
+
+```yaml
 version: "1.1"
 framework: human-md
 
@@ -19,3 +22,4 @@ sessions:
   min_break_minutes: 15
 
 enforcement: soft
+```
