@@ -724,7 +724,7 @@ class TestOvernightBlockedPeriods:
 class TestOvernightEpochs:
     """Overnight schedule epoch computation."""
 
-    def test_overnight_end_epoch_greater_than_start(self, config_file, session_state_path, session_log_path):
+    def test_overnight_end_epoch_greater_than_start(self):
         """22:00-06:00 schedule at 23:00: end_allowed_epoch must be > start_epoch."""
         from zoneinfo import ZoneInfo
         config = {**SAMPLE_CONFIG}
@@ -733,7 +733,7 @@ class TestOvernightEpochs:
         state = human_guard.compute_session_state(config, now, ZoneInfo("Europe/London"))
         assert state["end_allowed_epoch"] > state["start_epoch"]
 
-    def test_overnight_blocked_period_epoch(self, config_file, session_state_path, session_log_path):
+    def test_overnight_blocked_period_epoch(self):
         """23:00-01:00 blocked period: end_epoch must be > start_epoch when checked at 23:30."""
         from zoneinfo import ZoneInfo
         config = {**SAMPLE_CONFIG}
