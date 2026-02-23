@@ -12,6 +12,7 @@ Zero external dependencies — stdlib only.
 """
 
 import argparse
+import contextlib
 import json
 import sys
 import uuid
@@ -371,10 +372,8 @@ def _save_log(log_path, data):
 def _clean_notification_markers(session_id):
     """Remove one-shot notification markers for a specific session."""
     for marker in GUARD_DIR.glob(f".notified.*.{session_id}"):
-        try:
+        with contextlib.suppress(OSError):
             marker.rmdir()
-        except OSError:
-            pass
 
 
 def start_session(log_path, project_dir, forced=False):
