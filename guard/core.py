@@ -13,7 +13,6 @@ Zero external dependencies — stdlib only.
 
 import argparse
 import json
-import os
 import sys
 import uuid
 from datetime import datetime, time, timedelta
@@ -84,8 +83,7 @@ def _strip_inline_comment(value):
                 in_quote = None
             elif in_quote is None:
                 in_quote = ch
-        elif ch == '#' and in_quote is None:
-            if i > 0 and value[i - 1] in (' ', '\t'):
+        elif ch == '#' and in_quote is None and i > 0 and value[i - 1] in (' ', '\t'):
                 return value[:i].rstrip()
     return value
 

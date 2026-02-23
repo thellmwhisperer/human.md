@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # human-guard wrapper for zsh: intercepts `claude` to enforce human.md schedule
 # Installed by human-guard — https://github.com/thellmwhisperer/human.md
 # Source this file from ~/.zshrc
@@ -30,6 +31,7 @@ claude() {
     local sid force_flag=""
     $force && force_flag="--force"
     sid=$("$GUARD" --start-session --dir "$PWD" $force_flag)
+    # shellcheck disable=SC2064  # intentional: capture $GUARD and $sid at definition time
     trap "'$GUARD' --end-session '$sid' 2>/dev/null" EXIT INT TERM
 
     # Launch claude
