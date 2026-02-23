@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "human-md"
+version = "1.1.0"
+description = "A framework for healthy human-agent collaboration"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "The LLM Whisperer", email = "ssh@thellmwhisperer.dev" },
+]
+keywords = ["ai", "developer-tools", "wellbeing", "claude-code", "guardrails"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/thellmwhisperer/human.md"
+Repository = "https://github.com/thellmwhisperer/human.md"
+Issues = "https://github.com/thellmwhisperer/human.md/issues"
+Documentation = "https://github.com/thellmwhisperer/human.md/tree/main/docs"
+Changelog = "https://github.com/thellmwhisperer/human.md/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

@@ -1,5 +1,9 @@
 # human.md
 
+[![CI](https://github.com/thellmwhisperer/human.md/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/human.md/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/github/v/release/thellmwhisperer/human.md)](https://github.com/thellmwhisperer/human.md/releases)
+
 **A framework for healthy human-agent collaboration.**
 
 `human.md` is a configuration file you place in your repository to tell AI coding agents how to treat you — the human. It defines when you should be working, how long your sessions should last, and when the agent should encourage you to stop.

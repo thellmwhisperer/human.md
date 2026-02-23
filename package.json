@@ -1,0 +1,29 @@
+{
+  "name": "human-md",
+  "version": "1.1.0",
+  "description": "A framework for healthy human-agent collaboration",
+  "author": "The LLM Whisperer <ssh@thellmwhisperer.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thellmwhisperer/human.md.git"
+  },
+  "homepage": "https://github.com/thellmwhisperer/human.md",
+  "bugs": {
+    "url": "https://github.com/thellmwhisperer/human.md/issues"
+  },
+  "keywords": [
+    "ai",
+    "developer-tools",
+    "wellbeing",
+    "claude-code",
+    "guardrails",
+    "health"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test tests/test_guard.mjs"
+  }
+}

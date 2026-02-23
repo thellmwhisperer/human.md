@@ -1,0 +1,13 @@
+# Core enforcement logic — changes here require maintainer review
+/guard/core.py       @teseo
+/guard/core.mjs      @teseo
+/guard/hook.sh       @teseo
+/guard/wrapper.bash  @teseo
+/guard/wrapper.zsh   @teseo
+
+# Specification
+/spec/               @teseo
+
+# Installer
+/install.sh          @teseo
+/uninstall.sh        @teseo

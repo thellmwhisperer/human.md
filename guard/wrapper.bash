@@ -45,6 +45,7 @@ claude() {
     else
         sid=$("$GUARD" --start-session --dir "$PWD")
     fi
+    # shellcheck disable=SC2064  # intentional: capture $GUARD and $sid at definition time
     trap "'$GUARD' --end-session '$sid' 2>/dev/null" EXIT INT TERM
 
     # Launch claude
