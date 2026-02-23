@@ -5,7 +5,7 @@
  * All times use Europe/London timezone to match the real human.md config.
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -642,6 +642,10 @@ describe('Notification Markers', () => {
     origGuardDir = _setGuardDirForTest(guardDir);
   });
 
+  afterEach(() => {
+    _setGuardDirForTest(origGuardDir);
+  });
+
   it('end_session cleans markers', () => {
     const sid = startSession(logPath, '/tmp', false);
     mkdirSync(join(guardDir, `.notified.session_limit.${sid}`));
@@ -652,7 +656,6 @@ describe('Notification Markers', () => {
 
     assert.ok(!existsSync(join(guardDir, `.notified.session_limit.${sid}`)));
     assert.ok(!existsSync(join(guardDir, `.notified.warn_80.${sid}`)));
-    _setGuardDirForTest(origGuardDir);
   });
 
   it('end_session only cleans own markers', () => {
@@ -665,7 +668,6 @@ describe('Notification Markers', () => {
 
     assert.ok(!existsSync(join(guardDir, `.notified.session_limit.${sidA}`)));
     assert.ok(existsSync(join(guardDir, `.notified.session_limit.${sidB}`)));
-    _setGuardDirForTest(origGuardDir);
   });
 
   it('orphan cleanup removes markers', () => {
@@ -686,14 +688,12 @@ describe('Notification Markers', () => {
 
     assert.ok(!existsSync(join(guardDir, '.notified.session_limit.orphan1')));
     assert.ok(!existsSync(join(guardDir, '.notified.warn_80.orphan1')));
-    _setGuardDirForTest(origGuardDir);
   });
 
   it('end_session no markers no error', () => {
     const sid = startSession(logPath, '/tmp', false);
     // No markers — should not throw
     endSession(logPath, sid);
-    _setGuardDirForTest(origGuardDir);
   });
 });
 

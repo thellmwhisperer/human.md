@@ -764,7 +764,7 @@ YAML
   # Don't end it — let orphan cleanup handle it.
   # Backdate session start past orphan threshold (4h) using jq (always available).
   local old_time
-  old_time=$(jq -nr 'now - 18000 | strftime("%Y-%m-%dT%H:%M:%S+00:00")')
+  old_time=$(jq -nr 'now - 18000 | strftime("%Y-%m-%dT%H:%M:%S")')
   jq --arg sid "$sid" --arg old "$old_time" \
     '(.sessions[] | select(.id == $sid)).start_time = $old' \
     "$HOME/.claude/session-log.json" > "$HOME/.claude/session-log.json.tmp"
