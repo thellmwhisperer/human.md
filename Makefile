@@ -1,4 +1,6 @@
-.PHONY: test test-python test-node test-e2e lint lint-python lint-shell check
+.PHONY: all test test-python test-node test-e2e lint lint-python lint-shell check
+
+all: check
 
 test: test-python test-node
 
