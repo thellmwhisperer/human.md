@@ -417,6 +417,21 @@ export function checkBreak(logPath, minBreakMinutes, now = null) {
   const sessions = data.sessions || [];
   if (!sessions.length) return { ok: true, minutes_left: 0 };
 
+  // If there's an active non-orphaned session (another terminal working),
+  // skip break enforcement
+  const thresholdMs = ORPHAN_THRESHOLD_HOURS * 3600 * 1000;
+  for (const s of sessions) {
+    if (s.end_time == null && s.start_time) {
+      const start = new Date(s.start_time);
+      if (!isNaN(start.getTime())) {
+        const ageMs = now.getTime() - start.getTime();
+        if (ageMs >= 0 && ageMs < thresholdMs) {
+          return { ok: true, minutes_left: 0 };
+        }
+      }
+    }
+  }
+
   // Find the most recent ended session that was long enough to warrant a break.
   // Sessions shorter than minBreakMinutes are trivial (quick open/close)
   // and shouldn't force the user to wait.

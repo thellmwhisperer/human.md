@@ -563,6 +563,179 @@ class TestSessionLog:
         )
         assert result["ok"] is True
 
+    def test_break_skipped_when_active_session_exists(self, session_log_path):
+        """Active session in another terminal → skip break enforcement."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=5)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "active-terminal2",
+                    "start_time": (now - timedelta(minutes=10)).isoformat(),
+                    "end_time": None,
+                    "project_dir": "/tmp/other",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is True
+
+    def test_break_enforced_when_no_active_sessions(self, session_log_path):
+        """No active sessions → break still enforced."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=5)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is False
+
+    def test_break_skipped_with_multiple_active_sessions(self, session_log_path):
+        """Multiple active sessions → skip break enforcement."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=2)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "active-t2",
+                    "start_time": (now - timedelta(minutes=30)).isoformat(),
+                    "end_time": None,
+                    "project_dir": "/tmp/a",
+                    "forced": False,
+                },
+                {
+                    "id": "active-t3",
+                    "start_time": (now - timedelta(minutes=15)).isoformat(),
+                    "end_time": None,
+                    "project_dir": "/tmp/b",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is True
+
+    def test_break_not_skipped_for_orphan_active_session(self, session_log_path):
+        """Orphan 'active' session (>4h old) → don't skip break."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=5)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "orphan-active",
+                    "start_time": (now - timedelta(hours=5)).isoformat(),
+                    "end_time": None,
+                    "project_dir": "/tmp/old",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is False
+
+    def test_break_not_skipped_for_future_active_session(self, session_log_path):
+        """Active session with future start_time (clock skew) → don't skip break."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=5)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "future-active",
+                    "start_time": (now + timedelta(hours=2)).isoformat(),
+                    "end_time": None,
+                    "project_dir": "/tmp/future",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is False
+
+    def test_break_skipped_when_active_session_missing_end_time_key(self, session_log_path):
+        """Active session with end_time key absent (malformed log) → skip break."""
+        now = datetime(2026, 2, 22, 12, 0)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "long-done",
+                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "end_time": (now - timedelta(minutes=5)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "active-no-key",
+                    "start_time": (now - timedelta(minutes=10)).isoformat(),
+                    "project_dir": "/tmp/other",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is True
+
 
 # ===========================================================================
 # 3. check() integration — full --check flow
