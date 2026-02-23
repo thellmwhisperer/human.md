@@ -20,6 +20,26 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< 
 # If jq failed or values empty, bail gracefully
 [ -z "$MAX_EPOCH" ] && exit 0
 
+# --- One-shot notification helpers ---
+# Marker files prevent the same informational message from firing on every tool use.
+# Scoped by session ID so multiple terminals don't interfere with each other.
+# Only active when launched via the wrapper (HUMAN_GUARD_SESSION_ID set).
+# Without a managed session, notifications fire every time (legacy behavior).
+NOTIFY_DIR="$HOME/.claude/human-guard"
+SID="${HUMAN_GUARD_SESSION_ID:-}"
+
+# Emit a one-shot systemMessage (only when session-managed).
+# Without SID, always emits (no suppression).
+# Uses mkdir for atomic check+create (POSIX guarantee: mkdir fails if exists).
+_notify_once() {
+  local key="$1" msg="$2"
+  if [ -n "$SID" ]; then
+    mkdir "$NOTIFY_DIR/.notified.$key.$SID" 2>/dev/null || return 1
+  fi
+  jq -n --arg msg "$msg" '{"systemMessage": $msg}'
+  return 0
+}
+
 # Check blocked periods
 if [ "$BP_COUNT" -gt 0 ] 2>/dev/null; then
   BP_DATA=$(jq -r '.blocked_periods[] | "\(.start_epoch) \(.end_epoch)"' "$STATE" 2>/dev/null)
@@ -50,21 +70,24 @@ if [ "$NOW" -ge "$END_EPOCH" ]; then
   fi
 fi
 
-# Check session limit reached
+# Check session limit reached (informational — one-shot)
 if [ "$NOW" -ge "$MAX_EPOCH" ]; then
-  jq -n --arg msg "$(jq -r '.messages.session_limit // ""' "$STATE")" '{"systemMessage": $msg}'
+  MSG=$(jq -r '.messages.session_limit // ""' "$STATE")
+  _notify_once "session_limit" "$MSG" || true
   exit 0
 fi
 
-# Check 80% warning
+# Check 80% warning (informational — one-shot)
 if [ "$NOW" -ge "$WARN_EPOCH" ] && [ "$NOW" -lt "$MAX_EPOCH" ]; then
-  jq -n --arg msg "$(jq -r '.messages.break_reminder // ""' "$STATE")" '{"systemMessage": $msg}'
+  MSG=$(jq -r '.messages.break_reminder // ""' "$STATE")
+  _notify_once "warn_80" "$MSG" || true
   exit 0
 fi
 
-# Check wind-down
+# Check wind-down (informational — one-shot)
 if [ "$WIND_DOWN_EPOCH" -gt 0 ] && [ "$NOW" -ge "$WIND_DOWN_EPOCH" ]; then
-  jq -n --arg msg "$(jq -r '.messages.wind_down // ""' "$STATE")" '{"systemMessage": $msg}'
+  MSG=$(jq -r '.messages.wind_down // ""' "$STATE")
+  _notify_once "wind_down" "$MSG" || true
   exit 0
 fi
 

@@ -545,6 +545,236 @@ JSON
   [ $rc -eq 2 ]
 }
 
+test_hook_session_limit_one_shot() {
+  run_install_defaults
+  local now
+  now=$(date +%s)
+  # max_epoch in the past → session limit reached
+  cat > "$HOME/.claude/session-state.json" <<JSON
+{
+  "max_epoch": $((now - 60)),
+  "warn_epoch": $((now - 120)),
+  "wind_down_epoch": 0,
+  "end_allowed_epoch": $((now + 9000)),
+  "enforcement": "soft",
+  "blocked_periods": [],
+  "messages": {
+    "session_limit": "Take a break now.",
+    "wind_down": "",
+    "blocked_period": "",
+    "break_reminder": "",
+    "outside_hours": ""
+  }
+}
+JSON
+  # First call: should emit systemMessage
+  local output1
+  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$output1" | jq -e '.systemMessage' > /dev/null
+  # Second call: marker exists → silent (no output)
+  local output2
+  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$output2" ]
+}
+
+test_hook_warn_80_one_shot() {
+  run_install_defaults
+  local now
+  now=$(date +%s)
+  # warn_epoch in the past, max_epoch in the future → 80% warning
+  cat > "$HOME/.claude/session-state.json" <<JSON
+{
+  "max_epoch": $((now + 600)),
+  "warn_epoch": $((now - 60)),
+  "wind_down_epoch": 0,
+  "end_allowed_epoch": $((now + 9000)),
+  "enforcement": "soft",
+  "blocked_periods": [],
+  "messages": {
+    "session_limit": "",
+    "wind_down": "",
+    "blocked_period": "",
+    "break_reminder": "80 percent warning.",
+    "outside_hours": ""
+  }
+}
+JSON
+  local output1
+  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$output1" | jq -e '.systemMessage' > /dev/null
+  local output2
+  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$output2" ]
+}
+
+test_hook_wind_down_one_shot() {
+  run_install_defaults
+  local now
+  now=$(date +%s)
+  # wind_down_epoch in the past → wind-down active
+  cat > "$HOME/.claude/session-state.json" <<JSON
+{
+  "max_epoch": $((now + 9000)),
+  "warn_epoch": $((now + 7200)),
+  "wind_down_epoch": $((now - 60)),
+  "end_allowed_epoch": $((now + 9000)),
+  "enforcement": "soft",
+  "blocked_periods": [],
+  "messages": {
+    "session_limit": "",
+    "wind_down": "Wind down now.",
+    "blocked_period": "",
+    "break_reminder": "",
+    "outside_hours": ""
+  }
+}
+JSON
+  local output1
+  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$output1" | jq -e '.systemMessage' > /dev/null
+  local output2
+  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$output2" ]
+}
+
+test_end_session_cleans_notification_markers() {
+  run_install_defaults
+  cat > "$HOME/.claude/human.md" <<'YAML'
+version: "1.1"
+framework: human-md
+operator:
+  timezone: "UTC"
+schedule:
+  allowed_hours:
+    start: "00:00"
+    end: "00:00"
+enforcement: soft
+YAML
+  local sid
+  sid=$("$HOME/.claude/human-guard/core" --start-session --dir /tmp)
+  # Create session-scoped marker files
+  mkdir "$HOME/.claude/human-guard/.notified.session_limit.$sid"
+  mkdir "$HOME/.claude/human-guard/.notified.warn_80.$sid"
+  mkdir "$HOME/.claude/human-guard/.notified.wind_down.$sid"
+  [ -d "$HOME/.claude/human-guard/.notified.session_limit.$sid" ]
+  # End session should clean its markers
+  "$HOME/.claude/human-guard/core" --end-session "$sid"
+  [ ! -d "$HOME/.claude/human-guard/.notified.session_limit.$sid" ]
+  [ ! -d "$HOME/.claude/human-guard/.notified.warn_80.$sid" ]
+  [ ! -d "$HOME/.claude/human-guard/.notified.wind_down.$sid" ]
+}
+
+test_multi_session_markers_isolated() {
+  run_install_defaults
+  local now
+  now=$(date +%s)
+  # Session limit reached
+  cat > "$HOME/.claude/session-state.json" <<JSON
+{
+  "max_epoch": $((now - 60)),
+  "warn_epoch": $((now - 120)),
+  "wind_down_epoch": 0,
+  "end_allowed_epoch": $((now + 9000)),
+  "enforcement": "soft",
+  "blocked_periods": [],
+  "messages": {
+    "session_limit": "Take a break.",
+    "wind_down": "",
+    "blocked_period": "",
+    "break_reminder": "",
+    "outside_hours": ""
+  }
+}
+JSON
+  # Session A fires notification → creates marker for sessA
+  local outA
+  outA=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$outA" | jq -e '.systemMessage' > /dev/null
+  # Session A second call → silent (marker exists)
+  local outA2
+  outA2=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$outA2" ]
+  # Session B fires → gets its OWN notification (sessA marker doesn't affect it)
+  local outB
+  outB=$(HUMAN_GUARD_SESSION_ID=sessB echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$outB" | jq -e '.systemMessage' > /dev/null
+  # Session B second call → silent
+  local outB2
+  outB2=$(HUMAN_GUARD_SESSION_ID=sessB echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$outB2" ]
+  # Session A still silent (its marker is intact)
+  local outA3
+  outA3=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  [ -z "$outA3" ]
+}
+
+test_hook_no_sid_no_suppression() {
+  # Without HUMAN_GUARD_SESSION_ID, notifications fire every time (legacy)
+  run_install_defaults
+  local now
+  now=$(date +%s)
+  cat > "$HOME/.claude/session-state.json" <<JSON
+{
+  "max_epoch": $((now - 60)),
+  "warn_epoch": $((now - 120)),
+  "wind_down_epoch": 0,
+  "end_allowed_epoch": $((now + 9000)),
+  "enforcement": "soft",
+  "blocked_periods": [],
+  "messages": {
+    "session_limit": "Take a break.",
+    "wind_down": "",
+    "blocked_period": "",
+    "break_reminder": "",
+    "outside_hours": ""
+  }
+}
+JSON
+  # First call without SID: emits
+  local out1
+  out1=$(echo '{}' | bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$out1" | jq -e '.systemMessage' > /dev/null
+  # Second call without SID: still emits (no suppression without managed session)
+  local out2
+  out2=$(echo '{}' | bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  echo "$out2" | jq -e '.systemMessage' > /dev/null
+  # No marker files created with "global" scope
+  ! ls "$HOME/.claude/human-guard/.notified."* 2>/dev/null
+}
+
+test_orphan_cleanup_removes_markers() {
+  run_install_defaults
+  cat > "$HOME/.claude/human.md" <<'YAML'
+version: "1.1"
+framework: human-md
+operator:
+  timezone: "UTC"
+schedule:
+  allowed_hours:
+    start: "00:00"
+    end: "00:00"
+enforcement: soft
+YAML
+  # Start a session, create markers for it
+  local sid
+  sid=$("$HOME/.claude/human-guard/core" --start-session --dir /tmp)
+  mkdir "$HOME/.claude/human-guard/.notified.session_limit.$sid"
+  mkdir "$HOME/.claude/human-guard/.notified.warn_80.$sid"
+  [ -d "$HOME/.claude/human-guard/.notified.session_limit.$sid" ]
+  # Don't end it — let orphan cleanup handle it.
+  # Backdate session start past orphan threshold (4h) using jq (always available).
+  local old_time
+  old_time=$(jq -nr 'now - 18000 | strftime("%Y-%m-%dT%H:%M:%S+00:00")')
+  jq --arg sid "$sid" --arg old "$old_time" \
+    '(.sessions[] | select(.id == $sid)).start_time = $old' \
+    "$HOME/.claude/session-log.json" > "$HOME/.claude/session-log.json.tmp"
+  mv "$HOME/.claude/session-log.json.tmp" "$HOME/.claude/session-log.json"
+  "$HOME/.claude/human-guard/core" --check 2>/dev/null || true
+  # Orphan cleanup should have cleaned the markers
+  [ ! -d "$HOME/.claude/human-guard/.notified.session_limit.$sid" ]
+  [ ! -d "$HOME/.claude/human-guard/.notified.warn_80.$sid" ]
+}
+
 test_hook_wind_down_pre_midnight_session_post_midnight() {
   # Scenario: schedule 22:00-06:00, wind_down 23:30, session at 01:00
   # wind_down_epoch should be in the past (yesterday 23:30) → hook detects it
@@ -647,6 +877,15 @@ run_test "hook advisory blocked_period no block" test_hook_advisory_blocked_peri
 run_test "hook soft blocked_period blocks" test_hook_soft_blocked_period_blocks
 run_test "hook wind_down pre-midnight + session post-midnight" test_hook_wind_down_pre_midnight_session_post_midnight
 run_test "uninstall preserves unrelated hooks" test_uninstall_preserves_unrelated_hook_entries
+echo ""
+echo "One-shot notifications:"
+run_test "session_limit one-shot" test_hook_session_limit_one_shot
+run_test "warn_80 one-shot" test_hook_warn_80_one_shot
+run_test "wind_down one-shot" test_hook_wind_down_one_shot
+run_test "end-session cleans markers" test_end_session_cleans_notification_markers
+run_test "multi-session markers isolated" test_multi_session_markers_isolated
+run_test "no SID no suppression" test_hook_no_sid_no_suppression
+run_test "orphan cleanup removes markers" test_orphan_cleanup_removes_markers
 echo ""
 echo "Uninstaller:"
 run_test "removes guard dir" test_uninstall_removes_guard_dir
