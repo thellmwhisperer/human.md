@@ -1,4 +1,4 @@
-.PHONY: all test test-python test-node test-e2e lint lint-python lint-shell check
+.PHONY: all test test-python test-node test-e2e lint lint-python lint-shell check clean
 
 all: check
 
@@ -22,3 +22,6 @@ lint-shell:
 	shellcheck guard/hook.sh guard/wrapper.bash guard/wrapper.zsh install.sh uninstall.sh
 
 check: lint test
+
+clean:
+	@echo "Nothing to clean"

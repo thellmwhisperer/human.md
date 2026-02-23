@@ -48,7 +48,7 @@ make lint
 
 ## Project Structure
 
-```
+```text
 guard/          Core enforcement logic (Python + Node implementations)
 spec/           Specification document
 templates/      User-facing templates
