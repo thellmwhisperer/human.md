@@ -33,7 +33,7 @@ make test
 make test-python
 make test-node
 
-# E2E (requires jq, modifies ~/.claude — runs in CI)
+# E2E (requires jq — uses sandboxed HOME, safe to run locally)
 make test-e2e
 
 # Linting
