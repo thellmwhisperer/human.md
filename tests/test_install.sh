@@ -279,7 +279,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 sessions:
   max_continuous_minutes: 150
 enforcement: soft
@@ -300,7 +300,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 enforcement: soft
 YAML
   local sid
@@ -321,7 +321,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 enforcement: soft
 YAML
   "$HOME/.claude/human-guard/core" --check 2>/dev/null
@@ -353,6 +353,7 @@ test_e2e_remote_install() {
   [ -x "$HOME/.claude/human-guard/core" ]
   [ -f "$HOME/.claude/human-guard/hook.sh" ]
   jq -e '.hooks.PreToolUse' "$HOME/.claude/settings.json" > /dev/null
+  jq -r '.hooks.PreToolUse[].hooks[].command' "$HOME/.claude/settings.json" | grep -q 'human-guard/hook.sh'
   [ -f "$HOME/.claude/human.md" ]
 }
 
@@ -441,7 +442,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 sessions:
   max_continuous_minutes: 1
 enforcement: advisory
