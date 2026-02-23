@@ -87,6 +87,23 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 Keep messages short and descriptive.
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). Version bumps
+are determined by the type of change:
+
+- `fix:` → **patch** (1.1.0 → 1.1.1)
+- `feat:` → **minor** (1.1.0 → 1.2.0)
+- Breaking changes → **major** (1.1.0 → 2.0.0)
+
+Every PR that changes runtime behavior must:
+
+1. Bump `version` in both `pyproject.toml` and `package.json`
+2. Add an entry to `CHANGELOG.md` under the new version
+
+On merge to main, the CI creates a GitHub Release automatically from the
+version in `pyproject.toml`. If the version wasn't bumped, no release is created.
+
 ## Design Principles
 
 - **Zero external dependencies** in production code. The core must run with stdlib only.
