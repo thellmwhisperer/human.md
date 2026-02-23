@@ -48,8 +48,8 @@ claude() {
     # shellcheck disable=SC2064  # intentional: capture $GUARD and $sid at definition time
     trap "'$GUARD' --end-session '$sid' 2>/dev/null" EXIT INT TERM
 
-    # Launch claude
-    command claude "${args[@]}"
+    # Launch claude (session ID scopes hook notification markers per session)
+    HUMAN_GUARD_SESSION_ID="$sid" command claude "${args[@]}"
     local exit_code=$?
 
     # End session

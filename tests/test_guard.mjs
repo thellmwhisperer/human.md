@@ -5,9 +5,9 @@
  * All times use Europe/London timezone to match the real human.md config.
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +21,7 @@ import {
   cleanupOrphanSessions,
   check,
   computeSessionState,
+  _setGuardDirForTest,
 } from '../guard/core.mjs';
 
 // ---------------------------------------------------------------------------
@@ -623,6 +624,78 @@ describe('Session Log', () => {
     writeFileSync(logPath, JSON.stringify(logData));
     const result = checkBreak(logPath, 15, now);
     assert.strictEqual(result.ok, true);
+  });
+});
+
+// ===========================================================================
+// 2b. Notification markers — lifecycle
+// ===========================================================================
+
+describe('Notification Markers', () => {
+  let tmpDir, logPath, guardDir, origGuardDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    logPath = join(tmpDir, 'session-log.json');
+    guardDir = join(tmpDir, 'human-guard');
+    mkdirSync(guardDir, { recursive: true });
+    origGuardDir = _setGuardDirForTest(guardDir);
+  });
+
+  afterEach(() => {
+    _setGuardDirForTest(origGuardDir);
+  });
+
+  it('end_session cleans markers', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    mkdirSync(join(guardDir, `.notified.session_limit.${sid}`));
+    mkdirSync(join(guardDir, `.notified.warn_80.${sid}`));
+    assert.ok(existsSync(join(guardDir, `.notified.session_limit.${sid}`)));
+
+    endSession(logPath, sid);
+
+    assert.ok(!existsSync(join(guardDir, `.notified.session_limit.${sid}`)));
+    assert.ok(!existsSync(join(guardDir, `.notified.warn_80.${sid}`)));
+  });
+
+  it('end_session only cleans own markers', () => {
+    const sidA = startSession(logPath, '/tmp', false);
+    const sidB = startSession(logPath, '/tmp', false);
+    mkdirSync(join(guardDir, `.notified.session_limit.${sidA}`));
+    mkdirSync(join(guardDir, `.notified.session_limit.${sidB}`));
+
+    endSession(logPath, sidA);
+
+    assert.ok(!existsSync(join(guardDir, `.notified.session_limit.${sidA}`)));
+    assert.ok(existsSync(join(guardDir, `.notified.session_limit.${sidB}`)));
+  });
+
+  it('orphan cleanup removes markers', () => {
+    const now = new Date();
+    const orphanStart = new Date(now.getTime() - 6 * 3600 * 1000).toISOString();
+    const logData = {
+      sessions: [{
+        id: 'orphan1',
+        start_time: orphanStart,
+        end_time: null,
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    mkdirSync(join(guardDir, '.notified.session_limit.orphan1'));
+    mkdirSync(join(guardDir, '.notified.warn_80.orphan1'));
+
+    cleanupOrphanSessions(logPath, now);
+
+    assert.ok(!existsSync(join(guardDir, '.notified.session_limit.orphan1')));
+    assert.ok(!existsSync(join(guardDir, '.notified.warn_80.orphan1')));
+  });
+
+  it('end_session no markers no error', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // No markers — should not throw
+    endSession(logPath, sid);
   });
 });
 

@@ -13,7 +13,7 @@
  * Compatible with Node 18+, Bun, Deno.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +24,9 @@ import { randomUUID } from 'node:crypto';
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, '.claude');
-const GUARD_DIR = join(CLAUDE_DIR, 'human-guard');
+let GUARD_DIR = join(CLAUDE_DIR, 'human-guard');
+/** @internal Test-only: override GUARD_DIR. Returns previous value. */
+export function _setGuardDirForTest(dir) { const prev = GUARD_DIR; GUARD_DIR = dir; return prev; }
 const DEFAULT_STATE_PATH = join(CLAUDE_DIR, 'session-state.json');
 const DEFAULT_LOG_PATH = join(CLAUDE_DIR, 'session-log.json');
 function findRepoRoot() {
@@ -369,6 +371,18 @@ function saveLog(logPath, data) {
   writeFileSync(logPath, JSON.stringify(data, null, 2));
 }
 
+function cleanNotificationMarkers(sessionId) {
+  try {
+    const suffix = `.${sessionId}`;
+    const entries = readdirSync(GUARD_DIR);
+    for (const name of entries) {
+      if (name.startsWith('.notified.') && name.endsWith(suffix)) {
+        try { rmdirSync(join(GUARD_DIR, name)); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* GUARD_DIR may not exist yet */ }
+}
+
 export function startSession(logPath, projectDir, forced = false) {
   const data = loadLog(logPath);
   const sid = randomUUID().replace(/-/g, '').slice(0, 8);
@@ -392,6 +406,7 @@ export function endSession(logPath, sessionId) {
     }
   }
   saveLog(logPath, data);
+  cleanNotificationMarkers(sessionId);
 }
 
 export function cleanupOrphanSessions(logPath, now = null) {
@@ -404,8 +419,10 @@ export function cleanupOrphanSessions(logPath, now = null) {
     const startTime = new Date(s.start_time);
     if (isNaN(startTime.getTime())) {
       s.end_time = s.start_time || now.toISOString();
+      if (s.id) cleanNotificationMarkers(s.id);
     } else if (now.getTime() - startTime.getTime() > thresholdMs) {
       s.end_time = s.start_time;
+      cleanNotificationMarkers(s.id);
     }
   }
   saveLog(logPath, data);

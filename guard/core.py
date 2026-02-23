@@ -12,6 +12,7 @@ Zero external dependencies — stdlib only.
 """
 
 import argparse
+import contextlib
 import json
 import sys
 import uuid
@@ -368,6 +369,13 @@ def _save_log(log_path, data):
     log_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def _clean_notification_markers(session_id):
+    """Remove one-shot notification markers for a specific session."""
+    for marker in GUARD_DIR.glob(f".notified.*.{session_id}"):
+        with contextlib.suppress(OSError):
+            marker.rmdir()
+
+
 def start_session(log_path, project_dir, forced=False):
     """Register a new session. Returns session ID."""
     log_path = Path(log_path)
@@ -385,7 +393,7 @@ def start_session(log_path, project_dir, forced=False):
 
 
 def end_session(log_path, session_id):
-    """Mark a session as ended."""
+    """Mark a session as ended and clean its notification markers."""
     log_path = Path(log_path)
     data = _load_log(log_path)
     for s in data["sessions"]:
@@ -393,6 +401,7 @@ def end_session(log_path, session_id):
             s["end_time"] = datetime.now().astimezone().isoformat()
             break
     _save_log(log_path, data)
+    _clean_notification_markers(session_id)
 
 
 def cleanup_orphan_sessions(log_path, now=None):
@@ -413,8 +422,11 @@ def cleanup_orphan_sessions(log_path, now=None):
                 start = start.replace(tzinfo=None)
             if now - start > threshold:
                 s["end_time"] = s["start_time"]  # Close it at start time
+                _clean_notification_markers(s["id"])
         except Exception:
             s["end_time"] = s["start_time"] if s.get("start_time") else now.isoformat()
+            if s.get("id"):
+                _clean_notification_markers(s["id"])
 
     _save_log(log_path, data)
 

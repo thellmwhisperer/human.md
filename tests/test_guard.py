@@ -734,6 +734,109 @@ class TestSessionLog:
 
 
 # ===========================================================================
+# 2b. Notification markers — lifecycle
+# ===========================================================================
+
+class TestNotificationMarkers:
+    """One-shot notification marker cleanup in end_session and orphan cleanup."""
+
+    def test_end_session_cleans_markers(self, tmp_path, session_log_path):
+        """end_session removes notification markers for that session."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        # Monkey-patch GUARD_DIR for this test
+        original = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            # Create markers (directories, matching atomic mkdir in hook.sh)
+            (guard_dir / f".notified.session_limit.{sid}").mkdir()
+            (guard_dir / f".notified.warn_80.{sid}").mkdir()
+            assert (guard_dir / f".notified.session_limit.{sid}").exists()
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+
+            assert not (guard_dir / f".notified.session_limit.{sid}").exists()
+            assert not (guard_dir / f".notified.warn_80.{sid}").exists()
+        finally:
+            human_guard.GUARD_DIR = original
+
+    def test_end_session_only_cleans_own_markers(self, tmp_path, session_log_path):
+        """end_session for sessA must not touch sessB's markers."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        original = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sidA = human_guard.start_session(
+                log_path=session_log_path, project_dir="/tmp"
+            )
+            sidB = human_guard.start_session(
+                log_path=session_log_path, project_dir="/tmp"
+            )
+            (guard_dir / f".notified.session_limit.{sidA}").mkdir()
+            (guard_dir / f".notified.session_limit.{sidB}").mkdir()
+
+            human_guard.end_session(log_path=session_log_path, session_id=sidA)
+
+            # A's marker gone, B's intact
+            assert not (guard_dir / f".notified.session_limit.{sidA}").exists()
+            assert (guard_dir / f".notified.session_limit.{sidB}").exists()
+        finally:
+            human_guard.GUARD_DIR = original
+
+    def test_orphan_cleanup_removes_markers(self, tmp_path, session_log_path):
+        """cleanup_orphan_sessions removes markers for auto-closed sessions."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        original = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            now = datetime(2026, 2, 22, 12, 0)
+            log_data = {
+                "sessions": [
+                    {
+                        "id": "orphan1",
+                        "start_time": "2026-02-22T06:00:00+00:00",
+                        "end_time": None,
+                        "project_dir": "/tmp",
+                        "forced": False,
+                    }
+                ]
+            }
+            session_log_path.write_text(json.dumps(log_data))
+            (guard_dir / ".notified.session_limit.orphan1").mkdir()
+            (guard_dir / ".notified.warn_80.orphan1").mkdir()
+
+            human_guard.cleanup_orphan_sessions(
+                log_path=session_log_path, now=now
+            )
+
+            assert not (guard_dir / ".notified.session_limit.orphan1").exists()
+            assert not (guard_dir / ".notified.warn_80.orphan1").exists()
+        finally:
+            human_guard.GUARD_DIR = original
+
+    def test_end_session_no_markers_no_error(self, tmp_path, session_log_path):
+        """end_session works fine when no markers exist."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        original = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path, project_dir="/tmp"
+            )
+            # No markers created — should not raise
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+        finally:
+            human_guard.GUARD_DIR = original
+
+
+# ===========================================================================
 # 3. check() integration — full --check flow
 # ===========================================================================
 
