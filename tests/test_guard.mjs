@@ -672,7 +672,7 @@ describe('Notification Markers', () => {
 
   it('orphan cleanup removes markers', () => {
     const now = new Date();
-    const orphanStart = new Date(now.getTime() - 5 * 3600 * 1000).toISOString();
+    const orphanStart = new Date(now.getTime() - 6 * 3600 * 1000).toISOString();
     const logData = {
       sessions: [{
         id: 'orphan1',
