@@ -24,7 +24,9 @@ import { randomUUID } from 'node:crypto';
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, '.claude');
-const GUARD_DIR = join(CLAUDE_DIR, 'human-guard');
+let GUARD_DIR = join(CLAUDE_DIR, 'human-guard');
+/** @internal Test-only: override GUARD_DIR. Returns previous value. */
+export function _setGuardDirForTest(dir) { const prev = GUARD_DIR; GUARD_DIR = dir; return prev; }
 const DEFAULT_STATE_PATH = join(CLAUDE_DIR, 'session-state.json');
 const DEFAULT_LOG_PATH = join(CLAUDE_DIR, 'session-log.json');
 function findRepoRoot() {
