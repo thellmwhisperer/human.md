@@ -671,10 +671,12 @@ describe('Notification Markers', () => {
   });
 
   it('orphan cleanup removes markers', () => {
+    const now = new Date();
+    const orphanStart = new Date(now.getTime() - 5 * 3600 * 1000).toISOString();
     const logData = {
       sessions: [{
         id: 'orphan1',
-        start_time: '2026-02-22T06:00:00+00:00',
+        start_time: orphanStart,
         end_time: null,
         project_dir: '/tmp',
         forced: false,
@@ -684,7 +686,7 @@ describe('Notification Markers', () => {
     mkdirSync(join(guardDir, '.notified.session_limit.orphan1'));
     mkdirSync(join(guardDir, '.notified.warn_80.orphan1'));
 
-    cleanupOrphanSessions(logPath, fakeNow(2026, 2, 22, 12, 0));
+    cleanupOrphanSessions(logPath, now);
 
     assert.ok(!existsSync(join(guardDir, '.notified.session_limit.orphan1')));
     assert.ok(!existsSync(join(guardDir, '.notified.warn_80.orphan1')));

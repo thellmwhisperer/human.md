@@ -569,11 +569,11 @@ test_hook_session_limit_one_shot() {
 JSON
   # First call: should emit systemMessage
   local output1
-  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output1=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$output1" | jq -e '.systemMessage' > /dev/null
   # Second call: marker exists → silent (no output)
   local output2
-  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output2=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$output2" ]
 }
 
@@ -600,10 +600,10 @@ test_hook_warn_80_one_shot() {
 }
 JSON
   local output1
-  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output1=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$output1" | jq -e '.systemMessage' > /dev/null
   local output2
-  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output2=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$output2" ]
 }
 
@@ -630,10 +630,10 @@ test_hook_wind_down_one_shot() {
 }
 JSON
   local output1
-  output1=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output1=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$output1" | jq -e '.systemMessage' > /dev/null
   local output2
-  output2=$(HUMAN_GUARD_SESSION_ID=sess1 echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  output2=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sess1 bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$output2" ]
 }
 
@@ -688,23 +688,23 @@ test_multi_session_markers_isolated() {
 JSON
   # Session A fires notification → creates marker for sessA
   local outA
-  outA=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  outA=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$outA" | jq -e '.systemMessage' > /dev/null
   # Session A second call → silent (marker exists)
   local outA2
-  outA2=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  outA2=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$outA2" ]
   # Session B fires → gets its OWN notification (sessA marker doesn't affect it)
   local outB
-  outB=$(HUMAN_GUARD_SESSION_ID=sessB echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  outB=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$outB" | jq -e '.systemMessage' > /dev/null
   # Session B second call → silent
   local outB2
-  outB2=$(HUMAN_GUARD_SESSION_ID=sessB echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  outB2=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sessB bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$outB2" ]
   # Session A still silent (its marker is intact)
   local outA3
-  outA3=$(HUMAN_GUARD_SESSION_ID=sessA echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
+  outA3=$(echo '{}' | HUMAN_GUARD_SESSION_ID=sessA bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   [ -z "$outA3" ]
 }
 
@@ -762,9 +762,11 @@ YAML
   mkdir "$HOME/.claude/human-guard/.notified.warn_80.$sid"
   [ -d "$HOME/.claude/human-guard/.notified.session_limit.$sid" ]
   # Don't end it — let orphan cleanup handle it.
-  # Backdate session start past orphan threshold (4h) using jq (always available).
+  # Backdate session start past orphan threshold (4h) using local time.
+  # jq strftime outputs UTC which causes flakiness on non-UTC systems;
+  # use date for a naive local timestamp instead.
   local old_time
-  old_time=$(jq -nr 'now - 18000 | strftime("%Y-%m-%dT%H:%M:%S")')
+  old_time=$(date -v-5H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -d '5 hours ago' '+%Y-%m-%dT%H:%M:%S')
   jq --arg sid "$sid" --arg old "$old_time" \
     '(.sessions[] | select(.id == $sid)).start_time = $old' \
     "$HOME/.claude/session-log.json" > "$HOME/.claude/session-log.json.tmp"
