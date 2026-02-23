@@ -1,5 +1,5 @@
 # human-guard wrapper for bash: intercepts `claude` to enforce human.md schedule
-# Installed by human-guard — https://github.com/teseo/human.md
+# Installed by human-guard — https://github.com/thellmwhisperer/human.md
 # Source this file from ~/.bashrc
 
 claude() {

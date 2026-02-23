@@ -279,7 +279,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 sessions:
   max_continuous_minutes: 150
 enforcement: soft
@@ -300,7 +300,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 enforcement: soft
 YAML
   local sid
@@ -321,7 +321,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 enforcement: soft
 YAML
   "$HOME/.claude/human-guard/core" --check 2>/dev/null
@@ -336,6 +336,25 @@ test_e2e_hook_no_state_file() {
   local rc=0
   echo '{}' | bash "$HOME/.claude/human-guard/hook.sh" || rc=$?
   [ $rc -eq 0 ]
+}
+
+test_e2e_remote_install() {
+  # Patch REPO_URL to use file:// so install.sh downloads from local repo (no HTTP server needed)
+  # Escape & for sed replacement and spaces for file:// URLs
+  local file_url
+  file_url="file://$(printf '%s' "$SCRIPT_DIR" | sed -e 's/ /%20/g' -e 's/[\\&]/\\&/g')"
+  local patched="$SANDBOX/install.sh"
+  sed "s|https://raw.githubusercontent.com/thellmwhisperer/human.md/main|${file_url}|" "$SCRIPT_DIR/install.sh" > "$patched"
+
+  # Run from $SANDBOX (no guard/core.py present) so install.sh takes the remote download branch
+  (cd "$SANDBOX" && printf '\n\n\n\n\n\n\n\n\n' | bash "$patched" 2>/dev/null)
+
+  # Verify installation
+  [ -x "$HOME/.claude/human-guard/core" ]
+  [ -f "$HOME/.claude/human-guard/hook.sh" ]
+  jq -e '.hooks.PreToolUse' "$HOME/.claude/settings.json" > /dev/null
+  jq -r '.hooks.PreToolUse[].hooks[].command' "$HOME/.claude/settings.json" | grep -q 'human-guard/hook.sh'
+  [ -f "$HOME/.claude/human.md" ]
 }
 
 # === Uninstaller tests ===
@@ -423,7 +442,7 @@ operator:
 schedule:
   allowed_hours:
     start: "00:00"
-    end: "23:59"
+    end: "00:00"
 sessions:
   max_continuous_minutes: 1
 enforcement: advisory
@@ -617,6 +636,7 @@ run_test "check within hours" test_e2e_check_within_hours
 run_test "session lifecycle" test_e2e_session_lifecycle
 run_test "hook reads state" test_e2e_hook_reads_state
 run_test "hook no state" test_e2e_hook_no_state_file
+run_test "remote install (curl|bash)" test_e2e_remote_install
 echo ""
 echo "Security:"
 run_test "hook no command injection" test_hook_no_command_injection

@@ -1,6 +1,6 @@
 #!/bin/bash
 # human-guard PreToolUse hook: mid-session enforcement
-# Installed by human-guard — https://github.com/teseo/human.md
+# Installed by human-guard — https://github.com/thellmwhisperer/human.md
 #
 # Reads pre-computed epochs from session-state.json and compares with current time.
 # Exit 0 = ok (optionally with systemMessage), Exit 2 = block tool use.
