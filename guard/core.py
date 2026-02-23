@@ -435,6 +435,20 @@ def check_break(log_path, min_break_minutes, now=None):
     if not sessions:
         return {"ok": True, "minutes_left": 0}
 
+    # If there's an active non-orphaned session (another terminal working),
+    # skip break enforcement
+    for s in sessions:
+        if s.get("end_time") is None and s.get("start_time"):
+            try:
+                start = datetime.fromisoformat(s["start_time"])
+                if start.tzinfo:
+                    start = start.replace(tzinfo=None)
+                age_hours = (now - start).total_seconds() / 3600
+                if 0 <= age_hours < ORPHAN_THRESHOLD_HOURS:
+                    return {"ok": True, "minutes_left": 0}
+            except Exception:
+                continue
+
     # Find the most recent ended session that was long enough to warrant a break.
     # Sessions shorter than min_break_minutes are trivial (quick open/close)
     # and shouldn't force the user to wait.

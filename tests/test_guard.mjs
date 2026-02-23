@@ -475,6 +475,155 @@ describe('Session Log', () => {
     const result = checkBreak(logPath, 15, fakeNow(2026, 2, 22, 12, 0));
     assert.strictEqual(result.ok, true);
   });
+
+  it('break skipped when active session exists', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'active-terminal2',
+          start_time: new Date(now.getTime() - 10 * 60 * 1000).toISOString(),
+          end_time: null,
+          project_dir: '/tmp/other',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, true);
+  });
+
+  it('break enforced when no active sessions', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, false);
+  });
+
+  it('break skipped with multiple active sessions', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 2 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'active-t2',
+          start_time: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
+          end_time: null,
+          project_dir: '/tmp/a',
+          forced: false,
+        },
+        {
+          id: 'active-t3',
+          start_time: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
+          end_time: null,
+          project_dir: '/tmp/b',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, true);
+  });
+
+  it('break not skipped for orphan active session', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'orphan-active',
+          start_time: new Date(now.getTime() - 5 * 3600 * 1000).toISOString(),
+          end_time: null,
+          project_dir: '/tmp/old',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, false);
+  });
+
+  it('break not skipped for future active session', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'future-active',
+          start_time: new Date(now.getTime() + 2 * 3600 * 1000).toISOString(),
+          end_time: null,
+          project_dir: '/tmp/future',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, false);
+  });
+
+  it('break skipped when active session has missing end_time key', () => {
+    const now = fakeNow(2026, 2, 22, 12, 0);
+    const logData = {
+      sessions: [
+        {
+          id: 'long-done',
+          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'active-no-key',
+          start_time: new Date(now.getTime() - 10 * 60 * 1000).toISOString(),
+          project_dir: '/tmp/other',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, true);
+  });
 });
 
 // ===========================================================================
