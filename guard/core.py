@@ -402,10 +402,8 @@ def end_session(log_path, session_id):
             # Read last_activity from sentinel file (written by hook on each tool use)
             activity_file = GUARD_DIR / f".activity.{session_id}"
             if activity_file.exists():
-                try:
+                with contextlib.suppress(Exception):
                     s["last_activity"] = activity_file.read_text().strip()
-                except Exception:
-                    pass
                 with contextlib.suppress(OSError):
                     activity_file.unlink()
             if not s.get("last_activity"):
