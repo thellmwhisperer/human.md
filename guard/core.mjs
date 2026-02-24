@@ -478,9 +478,6 @@ export function checkBreak(logPath, minBreakMinutes, now = null, maxContinuousMi
     const end = new Date(s.end_time);
     const start = new Date(s.start_time);
     if (isNaN(end.getTime()) || isNaN(start.getTime())) continue;
-    const durationMin = (end.getTime() - start.getTime()) / 60000;
-    if (durationMin < minBreakMinutes) continue; // Skip trivial sessions
-
     // Get last interaction time for this session
     let sessionInteraction = end;
     if (s.last_activity) {
@@ -492,6 +489,13 @@ export function checkBreak(logPath, minBreakMinutes, now = null, maxContinuousMi
     if (prevSessionStart !== null) {
       const gapMin = (prevSessionStart.getTime() - sessionInteraction.getTime()) / 60000;
       if (gapMin >= minBreakMinutes) break;
+    }
+
+    const durationMin = (end.getTime() - start.getTime()) / 60000;
+    if (durationMin < minBreakMinutes) {
+      // Trivial sessions still interrupt gap chaining
+      prevSessionStart = start;
+      continue;
     }
 
     cumulativeWork += durationMin;

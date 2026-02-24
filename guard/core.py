@@ -502,10 +502,6 @@ def check_break(log_path, min_break_minutes, now=None, max_continuous_minutes=15
         try:
             end = _parse_naive(s["end_time"])
             start = _parse_naive(s["start_time"])
-            duration_min = (end - start).total_seconds() / 60
-            if duration_min < min_break_minutes:
-                continue  # Skip trivial sessions (quick open/close)
-
             # Get last interaction time for this session
             activity_str = s.get("last_activity")
             if activity_str:
@@ -521,6 +517,12 @@ def check_break(log_path, min_break_minutes, now=None, max_continuous_minutes=15
                 gap = (prev_session_start - session_interaction).total_seconds() / 60
                 if gap >= min_break_minutes:
                     break  # Real break found — stop accumulating
+
+            duration_min = (end - start).total_seconds() / 60
+            if duration_min < min_break_minutes:
+                # Trivial sessions still interrupt gap chaining
+                prev_session_start = start
+                continue
 
             cumulative_work += duration_min
             if last_interaction is None:
