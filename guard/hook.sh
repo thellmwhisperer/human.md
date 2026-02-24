@@ -28,6 +28,12 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< 
 NOTIFY_DIR="$HOME/.claude/human-guard"
 SID="${HUMAN_GUARD_SESSION_ID:-}"
 
+# Touch session activity (lightweight sentinel file, no JSON race)
+if [ -n "$SID" ]; then
+  mkdir -p "$NOTIFY_DIR" 2>/dev/null || true
+  date +%Y-%m-%dT%H:%M:%S > "$NOTIFY_DIR/.activity.$SID" 2>/dev/null
+fi
+
 # Emit a one-shot systemMessage (only when session-managed).
 # Without SID, always emits (no suppression).
 # Uses mkdir for atomic check+create (POSIX guarantee: mkdir fails if exists).
