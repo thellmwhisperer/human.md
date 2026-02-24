@@ -17,6 +17,7 @@ import {
   checkSchedule,
   startSession,
   endSession,
+  touchSession,
   checkBreak,
   cleanupOrphanSessions,
   check,
@@ -381,7 +382,7 @@ describe('Session Log', () => {
     const logData = {
       sessions: [{
         id: 'old',
-        start_time: '2026-02-22T10:00:00+00:00',
+        start_time: '2026-02-22T09:00:00',
         end_time: fiveMinAgo.toISOString(),
         project_dir: '/tmp',
         forced: false,
@@ -398,7 +399,7 @@ describe('Session Log', () => {
     const logData = {
       sessions: [{
         id: 'old',
-        start_time: '2026-02-22T10:00:00+00:00',
+        start_time: '2026-02-22T09:00:00',
         end_time: twentyMinAgo.toISOString(),
         project_dir: '/tmp',
         forced: false,
@@ -413,7 +414,7 @@ describe('Session Log', () => {
     const logData = {
       sessions: [{
         id: 'orphan',
-        start_time: '2026-02-22T06:00:00+00:00',
+        start_time: '2026-02-22T06:00:00',
         end_time: null,
         project_dir: '/tmp',
         forced: false,
@@ -447,7 +448,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -483,7 +484,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -508,7 +509,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -526,7 +527,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 2 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -558,7 +559,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -583,7 +584,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -608,7 +609,7 @@ describe('Session Log', () => {
       sessions: [
         {
           id: 'long-done',
-          start_time: new Date(now.getTime() - 65 * 60 * 1000).toISOString(),
+          start_time: new Date(now.getTime() - 160 * 60 * 1000).toISOString(),
           end_time: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
           project_dir: '/tmp',
           forced: false,
@@ -1256,5 +1257,171 @@ describe('blocked_period overnight epoch anchoring (Finding 4)', () => {
       nowEpoch < bp.start_epoch || nowEpoch >= bp.end_epoch,
       `nowEpoch (${nowEpoch}) should NOT be in [${bp.start_epoch}, ${bp.end_epoch})`
     );
+  });
+});
+
+// ===========================================================================
+// last_activity — break uses last interaction, not process close time
+// ===========================================================================
+
+describe('Last Activity', () => {
+  let tmpDir, logPath, guardDir, origGuardDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    logPath = join(tmpDir, 'session-log.json');
+    guardDir = join(tmpDir, 'human-guard');
+    mkdirSync(guardDir, { recursive: true });
+    origGuardDir = _setGuardDirForTest(guardDir);
+  });
+
+  afterEach(() => {
+    _setGuardDirForTest(origGuardDir);
+  });
+
+  it('break uses last_activity over end_time', () => {
+    // User stopped interacting 30min ago but closed session 2min ago.
+    // Break should be 30min (ok), not 2min (blocked).
+    const now = fakeNow(2026, 2, 24, 16, 30);
+    const logData = {
+      sessions: [{
+        id: 'idle-session',
+        start_time: '2026-02-24T11:00:00',
+        end_time: new Date(now.getTime() - 2 * 60 * 1000).toISOString(),
+        last_activity: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, true,
+      'break should measure from last_activity (30min ago), not end_time (2min ago)');
+  });
+
+  it('break falls back to end_time without last_activity', () => {
+    // No last_activity field → uses end_time (2min ago → blocked)
+    const now = fakeNow(2026, 2, 24, 16, 30);
+    const logData = {
+      sessions: [{
+        id: 'old-session',
+        start_time: '2026-02-24T11:00:00',
+        end_time: new Date(now.getTime() - 2 * 60 * 1000).toISOString(),
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now);
+    assert.strictEqual(result.ok, false,
+      'without last_activity, should fall back to end_time (2min ago = blocked)');
+  });
+
+  it('no break when work below maxContinuousMinutes', () => {
+    // 67min session → below 150min limit → ok
+    const now = fakeNow(2026, 2, 24, 22, 10);
+    const logData = {
+      sessions: [{
+        id: 'short-session',
+        start_time: '2026-02-24T21:00:00',
+        end_time: '2026-02-24T22:07:00',
+        last_activity: '2026-02-24T22:06:00',
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, true,
+      '67 min of work is below 150min limit — no break required');
+  });
+
+  it('break required when cumulative exceeds max', () => {
+    // 80min + 70min with 5min gap → 150min cumulative → blocked
+    const now = fakeNow(2026, 2, 24, 23, 35);
+    const logData = {
+      sessions: [
+        {
+          id: 'session-1',
+          start_time: '2026-02-24T21:00:00',
+          end_time: '2026-02-24T22:20:00',
+          last_activity: '2026-02-24T22:18:00',
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'session-2',
+          start_time: '2026-02-24T22:23:00',
+          end_time: '2026-02-24T23:33:00',
+          last_activity: '2026-02-24T23:32:00',
+          project_dir: '/tmp',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, false,
+      '150 min cumulative work (no real break between) — break required');
+  });
+
+  it('break resets after sufficient gap', () => {
+    // 120min + 32min break + 63min → cumulative since break = 63min → ok
+    const now = fakeNow(2026, 2, 24, 23, 35);
+    const logData = {
+      sessions: [
+        {
+          id: 'session-1',
+          start_time: '2026-02-24T20:00:00',
+          end_time: '2026-02-24T22:00:00',
+          last_activity: '2026-02-24T21:58:00',
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'session-2',
+          start_time: '2026-02-24T22:30:00',
+          end_time: '2026-02-24T23:33:00',
+          last_activity: '2026-02-24T23:32:00',
+          project_dir: '/tmp',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, true,
+      '32 min break resets counter — 63 min since break is below 150 limit');
+  });
+
+  it('touchSession writes sentinel file', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    touchSession(logPath, sid);
+    const sentinelPath = join(guardDir, `.activity.${sid}`);
+    assert.ok(existsSync(sentinelPath), 'touchSession should create sentinel file');
+  });
+
+  it('endSession reads sentinel into last_activity', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // Simulate hook writing sentinel
+    const sentinelPath = join(guardDir, `.activity.${sid}`);
+    writeFileSync(sentinelPath, '2026-02-24T14:00:00\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.last_activity, '2026-02-24T14:00:00',
+      'end_session should read sentinel into last_activity');
+    assert.ok(!existsSync(sentinelPath), 'sentinel should be cleaned up after endSession');
+  });
+
+  it('endSession without sentinel uses end_time', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // No sentinel written
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.last_activity, session.end_time,
+      'without sentinel, last_activity should equal end_time');
   });
 });

@@ -2,7 +2,7 @@
   "name": "human-md",
   "version": "1.1.0",
   "description": "A framework for healthy human-agent collaboration",
-  "author": "The LLM Whisperer <ssh@thellmwhisperer.dev>",
+  "author": "Javier Mellado (The LLM Whisperer) <ssh@thellmwhisperer.dev>",
   "license": "MIT",
   "repository": {
     "type": "git",

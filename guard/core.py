@@ -399,9 +399,31 @@ def end_session(log_path, session_id):
     for s in data["sessions"]:
         if s["id"] == session_id and s["end_time"] is None:
             s["end_time"] = datetime.now().astimezone().isoformat()
+            # Read last_activity from sentinel file (written by hook on each tool use)
+            activity_file = GUARD_DIR / f".activity.{session_id}"
+            if activity_file.exists():
+                try:
+                    s["last_activity"] = activity_file.read_text().strip()
+                except Exception:
+                    pass
+                with contextlib.suppress(OSError):
+                    activity_file.unlink()
+            if not s.get("last_activity"):
+                s["last_activity"] = s["end_time"]
             break
     _save_log(log_path, data)
     _clean_notification_markers(session_id)
+
+
+def touch_session(log_path, session_id):
+    """Write last_activity sentinel file for an active session.
+
+    Uses a separate file to avoid racing with session-log.json writes.
+    The sentinel is read by end_session when the session closes.
+    """
+    activity_file = GUARD_DIR / f".activity.{session_id}"
+    activity_file.parent.mkdir(parents=True, exist_ok=True)
+    activity_file.write_text(datetime.now().astimezone().isoformat() + "\n")
 
 
 def cleanup_orphan_sessions(log_path, now=None):
@@ -431,8 +453,21 @@ def cleanup_orphan_sessions(log_path, now=None):
     _save_log(log_path, data)
 
 
-def check_break(log_path, min_break_minutes, now=None):
+def _parse_naive(dt_str):
+    """Parse ISO datetime string to naive datetime, handling Z suffix."""
+    if dt_str.endswith("Z"):
+        dt_str = dt_str[:-1] + "+00:00"
+    dt = datetime.fromisoformat(dt_str)
+    if dt.tzinfo:
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+
+def check_break(log_path, min_break_minutes, now=None, max_continuous_minutes=150):
     """Check if enough break time has passed since last session.
+
+    Break is only required when cumulative work time (across sessions without
+    sufficient breaks between them) meets or exceeds max_continuous_minutes.
 
     Returns {"ok": True/False, "minutes_left": int}.
     """
@@ -450,40 +485,60 @@ def check_break(log_path, min_break_minutes, now=None):
     for s in sessions:
         if s.get("end_time") is None and s.get("start_time"):
             try:
-                start = datetime.fromisoformat(s["start_time"])
-                if start.tzinfo:
-                    start = start.replace(tzinfo=None)
+                start = _parse_naive(s["start_time"])
                 age_hours = (now - start).total_seconds() / 3600
                 if 0 <= age_hours < ORPHAN_THRESHOLD_HOURS:
                     return {"ok": True, "minutes_left": 0}
             except Exception:
                 continue
 
-    # Find the most recent ended session that was long enough to warrant a break.
-    # Sessions shorter than min_break_minutes are trivial (quick open/close)
-    # and shouldn't force the user to wait.
-    last_end = None
-    for s in reversed(sessions):
-        if s.get("end_time") and s.get("start_time"):
-            try:
-                end = datetime.fromisoformat(s["end_time"])
-                start = datetime.fromisoformat(s["start_time"])
-                if end.tzinfo:
-                    end = end.replace(tzinfo=None)
-                if start.tzinfo:
-                    start = start.replace(tzinfo=None)
-                duration_min = (end - start).total_seconds() / 60
-                if duration_min < min_break_minutes:
-                    continue  # Skip trivial sessions
-                last_end = end
-                break
-            except Exception:
-                continue
+    # Walk backward through ended sessions, accumulating work time.
+    # Stop when we find a gap >= min_break_minutes (a real break).
+    cumulative_work = 0
+    last_interaction = None
+    prev_session_start = None  # start of the chronologically later session
 
-    if last_end is None:
+    for s in reversed(sessions):
+        if not s.get("end_time") or not s.get("start_time"):
+            continue
+        try:
+            end = _parse_naive(s["end_time"])
+            start = _parse_naive(s["start_time"])
+            duration_min = (end - start).total_seconds() / 60
+            if duration_min < min_break_minutes:
+                continue  # Skip trivial sessions (quick open/close)
+
+            # Get last interaction time for this session
+            activity_str = s.get("last_activity")
+            if activity_str:
+                try:
+                    session_interaction = _parse_naive(activity_str)
+                except (ValueError, TypeError):
+                    session_interaction = end
+            else:
+                session_interaction = end
+
+            # If there was a real break between this session and the next one, stop
+            if prev_session_start is not None:
+                gap = (prev_session_start - session_interaction).total_seconds() / 60
+                if gap >= min_break_minutes:
+                    break  # Real break found — stop accumulating
+
+            cumulative_work += duration_min
+            if last_interaction is None:
+                last_interaction = session_interaction
+            prev_session_start = start
+        except Exception:
+            continue
+
+    if last_interaction is None:
         return {"ok": True, "minutes_left": 0}
 
-    elapsed = (now - last_end).total_seconds() / 60
+    # Only require break if cumulative work >= max_continuous_minutes
+    if cumulative_work < max_continuous_minutes:
+        return {"ok": True, "minutes_left": 0}
+
+    elapsed = (now - last_interaction).total_seconds() / 60
     if elapsed >= min_break_minutes:
         return {"ok": True, "minutes_left": 0}
     else:
@@ -653,8 +708,9 @@ def check(config_paths=None, state_path=None, log_path=None, force=False, now=No
     # Check break
     sessions_config = config.get("sessions", {})
     min_break = sessions_config.get("min_break_minutes", 15)
+    max_continuous = sessions_config.get("max_continuous_minutes", 150)
     cleanup_orphan_sessions(log_path, now_naive)
-    break_result = check_break(log_path, min_break, now_naive)
+    break_result = check_break(log_path, min_break, now=now_naive, max_continuous_minutes=max_continuous)
     if not break_result["ok"] and not force:
         if enforcement == "advisory":
             print(
@@ -688,6 +744,7 @@ def main():
     group.add_argument("--check", action="store_true", help="Check schedule and write session state")
     group.add_argument("--start-session", action="store_true", help="Register new session")
     group.add_argument("--end-session", metavar="ID", help="End a session by ID")
+    group.add_argument("--touch-session", metavar="ID", help="Update last_activity for a session")
 
     parser.add_argument("--force", action="store_true", help="Override blocks")
     parser.add_argument("--dir", default=".", help="Project directory")
@@ -706,6 +763,8 @@ def main():
         print(sid)
     elif args.end_session:
         end_session(log_path=DEFAULT_LOG_PATH, session_id=args.end_session)
+    elif args.touch_session:
+        touch_session(log_path=DEFAULT_LOG_PATH, session_id=args.touch_session)
 
 
 if __name__ == "__main__":

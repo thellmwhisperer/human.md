@@ -13,7 +13,7 @@
  * Compatible with Node 18+, Bun, Deno.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -402,11 +402,28 @@ export function endSession(logPath, sessionId) {
   for (const s of data.sessions) {
     if (s.id === sessionId && s.end_time === null) {
       s.end_time = new Date().toISOString();
+      // Read last_activity from sentinel file (written by hook on each tool use)
+      const activityFile = join(GUARD_DIR, `.activity.${sessionId}`);
+      if (existsSync(activityFile)) {
+        try {
+          s.last_activity = readFileSync(activityFile, 'utf-8').trim();
+        } catch { /* ignore */ }
+        try { unlinkSync(activityFile); } catch { /* ignore */ }
+      }
+      if (!s.last_activity) {
+        s.last_activity = s.end_time;
+      }
       break;
     }
   }
   saveLog(logPath, data);
   cleanNotificationMarkers(sessionId);
+}
+
+export function touchSession(logPath, sessionId) {
+  const activityFile = join(GUARD_DIR, `.activity.${sessionId}`);
+  mkdirSync(dirname(activityFile), { recursive: true });
+  writeFileSync(activityFile, new Date().toISOString() + '\n');
 }
 
 export function cleanupOrphanSessions(logPath, now = null) {
@@ -428,7 +445,7 @@ export function cleanupOrphanSessions(logPath, now = null) {
   saveLog(logPath, data);
 }
 
-export function checkBreak(logPath, minBreakMinutes, now = null) {
+export function checkBreak(logPath, minBreakMinutes, now = null, maxContinuousMinutes = 150) {
   const data = loadLog(logPath);
   if (!now) now = new Date();
   const sessions = data.sessions || [];
@@ -449,26 +466,47 @@ export function checkBreak(logPath, minBreakMinutes, now = null) {
     }
   }
 
-  // Find the most recent ended session that was long enough to warrant a break.
-  // Sessions shorter than minBreakMinutes are trivial (quick open/close)
-  // and shouldn't force the user to wait.
-  let lastEnd = null;
+  // Walk backward through ended sessions, accumulating work time.
+  // Stop when we find a gap >= minBreakMinutes (a real break).
+  let cumulativeWork = 0;
+  let lastInteraction = null;
+  let prevSessionStart = null;
+
   for (let i = sessions.length - 1; i >= 0; i--) {
     const s = sessions[i];
-    if (s.end_time && s.start_time) {
-      const end = new Date(s.end_time);
-      const start = new Date(s.start_time);
-      if (isNaN(end.getTime()) || isNaN(start.getTime())) continue;
-      const durationMin = (end.getTime() - start.getTime()) / 60000;
-      if (durationMin < minBreakMinutes) continue; // Skip trivial sessions
-      lastEnd = end;
-      break;
+    if (!s.end_time || !s.start_time) continue;
+    const end = new Date(s.end_time);
+    const start = new Date(s.start_time);
+    if (isNaN(end.getTime()) || isNaN(start.getTime())) continue;
+    const durationMin = (end.getTime() - start.getTime()) / 60000;
+    if (durationMin < minBreakMinutes) continue; // Skip trivial sessions
+
+    // Get last interaction time for this session
+    let sessionInteraction = end;
+    if (s.last_activity) {
+      const activity = new Date(s.last_activity);
+      if (!isNaN(activity.getTime())) sessionInteraction = activity;
     }
+
+    // If there was a real break between this session and the next one, stop
+    if (prevSessionStart !== null) {
+      const gapMin = (prevSessionStart.getTime() - sessionInteraction.getTime()) / 60000;
+      if (gapMin >= minBreakMinutes) break;
+    }
+
+    cumulativeWork += durationMin;
+    if (lastInteraction === null) lastInteraction = sessionInteraction;
+    prevSessionStart = start;
   }
 
-  if (!lastEnd) return { ok: true, minutes_left: 0 };
+  if (!lastInteraction) return { ok: true, minutes_left: 0 };
 
-  const elapsedMin = (now.getTime() - lastEnd.getTime()) / 60000;
+  // Only require break if cumulative work >= maxContinuousMinutes
+  if (cumulativeWork < maxContinuousMinutes) {
+    return { ok: true, minutes_left: 0 };
+  }
+
+  const elapsedMin = (now.getTime() - lastInteraction.getTime()) / 60000;
   if (elapsedMin >= minBreakMinutes) {
     return { ok: true, minutes_left: 0 };
   }
@@ -672,8 +710,9 @@ export function check(configPaths = null, statePath = null, logPath = null, forc
   // Check break
   const sessionsConfig = config.sessions || {};
   const minBreak = sessionsConfig.min_break_minutes || 15;
+  const maxContinuous = sessionsConfig.max_continuous_minutes || 150;
   cleanupOrphanSessions(logPath, nowDate);
-  const breakResult = checkBreak(logPath, minBreak, nowDate);
+  const breakResult = checkBreak(logPath, minBreak, nowDate, maxContinuous);
   if (!breakResult.ok && !force) {
     if (enforcement === 'advisory') {
       process.stderr.write(`Need ${breakResult.minutes_left} more minutes of break.\n`);
@@ -698,12 +737,13 @@ export function check(configPaths = null, statePath = null, logPath = null, forc
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { check: false, startSession: false, endSession: null, force: false, dir: '.' };
+  const args = { check: false, startSession: false, endSession: null, touchSession: null, force: false, dir: '.' };
   for (let i = 2; i < argv.length; i++) {
     switch (argv[i]) {
       case '--check': args.check = true; break;
       case '--start-session': args.startSession = true; break;
       case '--end-session': if (i + 1 < argv.length) args.endSession = argv[++i]; break;
+      case '--touch-session': if (i + 1 < argv.length) args.touchSession = argv[++i]; break;
       case '--force': args.force = true; break;
       case '--dir': if (i + 1 < argv.length) args.dir = argv[++i]; break;
     }
@@ -722,8 +762,10 @@ function main() {
     process.stdout.write(sid + '\n');
   } else if (args.endSession) {
     endSession(DEFAULT_LOG_PATH, args.endSession);
+  } else if (args.touchSession) {
+    touchSession(DEFAULT_LOG_PATH, args.touchSession);
   } else {
-    process.stderr.write('Usage: core.mjs --check | --start-session | --end-session ID\n');
+    process.stderr.write('Usage: core.mjs --check | --start-session | --end-session ID | --touch-session ID\n');
     process.exit(1);
   }
 }

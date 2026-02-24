@@ -428,7 +428,7 @@ class TestSessionLog:
             "sessions": [
                 {
                     "id": "old",
-                    "start_time": "2026-02-22T10:00:00+00:00",
+                    "start_time": "2026-02-22T09:00:00+00:00",
                     "end_time": five_min_ago.isoformat(),
                     "project_dir": "/tmp",
                     "forced": False,
@@ -518,7 +518,7 @@ class TestSessionLog:
             "sessions": [
                 {
                     "id": "long",
-                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "start_time": (now - timedelta(minutes=160)).isoformat(),
                     "end_time": (now - timedelta(minutes=5)).isoformat(),
                     "project_dir": "/tmp",
                     "forced": False,
@@ -589,13 +589,13 @@ class TestSessionLog:
         assert result["ok"] is True
 
     def test_break_enforced_when_no_active_sessions(self, session_log_path):
-        """No active sessions → break still enforced."""
+        """No active sessions → break still enforced after max_continuous work."""
         now = datetime(2026, 2, 22, 12, 0)
         log_data = {
             "sessions": [
                 {
                     "id": "long-done",
-                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "start_time": (now - timedelta(minutes=160)).isoformat(),
                     "end_time": (now - timedelta(minutes=5)).isoformat(),
                     "project_dir": "/tmp",
                     "forced": False,
@@ -653,7 +653,7 @@ class TestSessionLog:
             "sessions": [
                 {
                     "id": "long-done",
-                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "start_time": (now - timedelta(minutes=160)).isoformat(),
                     "end_time": (now - timedelta(minutes=5)).isoformat(),
                     "project_dir": "/tmp",
                     "forced": False,
@@ -682,7 +682,7 @@ class TestSessionLog:
             "sessions": [
                 {
                     "id": "long-done",
-                    "start_time": (now - timedelta(minutes=65)).isoformat(),
+                    "start_time": (now - timedelta(minutes=160)).isoformat(),
                     "end_time": (now - timedelta(minutes=5)).isoformat(),
                     "project_dir": "/tmp",
                     "forced": False,
@@ -734,7 +734,273 @@ class TestSessionLog:
 
 
 # ===========================================================================
-# 2b. Notification markers — lifecycle
+# 2b. last_activity — break uses last interaction, not process close time
+# ===========================================================================
+
+class TestLastActivity:
+    """check_break should use last_activity (last user message) instead of end_time
+    when available. This prevents false break enforcement when a session is left
+    idle before closing."""
+
+    def test_break_uses_last_activity_over_end_time(self, session_log_path):
+        """User stopped interacting 30min ago but closed session 2min ago.
+        Break should be 30min (ok), not 2min (blocked)."""
+        now = datetime(2026, 2, 24, 16, 30)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "idle-session",
+                    "start_time": "2026-02-24T11:00:00",
+                    "end_time": (now - timedelta(minutes=2)).isoformat(),
+                    "last_activity": (now - timedelta(minutes=30)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                }
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is True, \
+            "break should measure from last_activity (30min ago), not end_time (2min ago)"
+
+    def test_break_falls_back_to_end_time_without_last_activity(self, session_log_path):
+        """Sessions without last_activity field use end_time (backward compat)."""
+        now = datetime(2026, 2, 24, 16, 30)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "old-session",
+                    "start_time": "2026-02-24T11:00:00",
+                    "end_time": (now - timedelta(minutes=2)).isoformat(),
+                    "project_dir": "/tmp",
+                    "forced": False,
+                }
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "without last_activity, should fall back to end_time (2min ago = blocked)"
+
+    def test_touch_writes_sentinel_file(self, session_log_path, tmp_path):
+        """touch_session writes a sentinel file instead of modifying session-log.json."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            human_guard.touch_session(log_path=session_log_path, session_id=sid)
+            sentinel = guard_dir / f".activity.{sid}"
+            assert sentinel.exists(), "touch_session should create sentinel file"
+            content = sentinel.read_text().strip()
+            assert len(content) > 0, "sentinel should contain a timestamp"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_reads_sentinel_into_last_activity(self, session_log_path, tmp_path):
+        """end_session reads the sentinel file and stores last_activity in session log."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            # Simulate hook writing sentinel
+            sentinel = guard_dir / f".activity.{sid}"
+            sentinel.write_text("2026-02-24T14:00:00+00:00\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["last_activity"] == "2026-02-24T14:00:00+00:00", \
+                "end_session should read sentinel into last_activity"
+            assert not sentinel.exists(), "sentinel should be cleaned up after end_session"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_without_sentinel_uses_end_time(self, session_log_path, tmp_path):
+        """Without sentinel file, end_session sets last_activity = end_time."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            # No sentinel written — no hook touched the session
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["last_activity"] == session["end_time"], \
+                "without sentinel, last_activity should equal end_time"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_utc_z_suffix_last_activity_parsed_correctly(self, session_log_path):
+        """Safety net: Z-suffix timestamps from legacy data or JS touchSession must parse correctly."""
+        now = datetime(2026, 2, 24, 16, 30)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "utc-z-session",
+                    "start_time": "2026-02-24T11:00:00",
+                    "end_time": (now - timedelta(minutes=2)).isoformat(),
+                    # Hook writes: date -u +%Y-%m-%dT%H:%M:%SZ → "2026-02-24T16:00:00Z"
+                    "last_activity": "2026-02-24T16:00:00Z",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                }
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        # last_activity is 30min ago (16:00), not 2min ago (end_time 16:28)
+        assert result["ok"] is True, \
+            "Z-suffix timestamp should be parsed correctly (30min break = ok)"
+
+    def test_malformed_last_activity_falls_back_to_end_time(self, session_log_path):
+        """P3: Malformed last_activity should fall back to end_time, not skip session."""
+        now = datetime(2026, 2, 24, 16, 30)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "bad-activity",
+                    "start_time": "2026-02-24T11:00:00",
+                    "end_time": (now - timedelta(minutes=2)).isoformat(),
+                    "last_activity": "NOT_A_VALID_TIMESTAMP",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                }
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "malformed last_activity should fall back to end_time (2min ago = blocked)"
+
+    def test_no_break_when_work_below_max_continuous(self, session_log_path):
+        """Break only required after max_continuous_minutes of cumulative work.
+        User worked 67min (below 150min limit) → no break needed."""
+        now = datetime(2026, 2, 24, 22, 10)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "short-session",
+                    "start_time": "2026-02-24T21:00:00",
+                    "end_time": "2026-02-24T22:07:00",
+                    "last_activity": "2026-02-24T22:06:00",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                }
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is True, \
+            "67 min of work is below 150min limit — no break required"
+
+    def test_break_required_when_cumulative_exceeds_max(self, session_log_path):
+        """Break required when cumulative work across sessions >= max_continuous_minutes."""
+        now = datetime(2026, 2, 24, 23, 35)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "session-1",
+                    "start_time": "2026-02-24T21:00:00",
+                    "end_time": "2026-02-24T22:20:00",
+                    "last_activity": "2026-02-24T22:18:00",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "session-2",
+                    "start_time": "2026-02-24T22:23:00",
+                    "end_time": "2026-02-24T23:33:00",
+                    "last_activity": "2026-02-24T23:32:00",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        # Session 1: 80min, gap 5min (< 15min break), Session 2: 70min → cumulative 150min
+        assert result["ok"] is False, \
+            "150 min cumulative work (no real break between) → break required"
+
+    def test_break_resets_after_sufficient_gap(self, session_log_path):
+        """A real break (>= min_break_minutes gap) resets cumulative work counter."""
+        now = datetime(2026, 2, 24, 23, 35)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "session-1",
+                    "start_time": "2026-02-24T20:00:00",
+                    "end_time": "2026-02-24T22:00:00",
+                    "last_activity": "2026-02-24T21:58:00",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "session-2",
+                    "start_time": "2026-02-24T22:30:00",
+                    "end_time": "2026-02-24T23:33:00",
+                    "last_activity": "2026-02-24T23:32:00",
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        # Session 1: 120min, then 32min real break, Session 2: 63min
+        # Cumulative since last break = only 63min (< 150) → no break needed
+        assert result["ok"] is True, \
+            "32 min break resets counter — 63 min since break is below 150 limit"
+
+
+# ===========================================================================
+# 2c. Notification markers — lifecycle
 # ===========================================================================
 
 class TestNotificationMarkers:
