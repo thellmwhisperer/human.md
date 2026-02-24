@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-02-24
+
+### Added
+- Cumulative work tracking: break only required after `max_continuous_minutes` (default 150min) of total work across sessions
+- `touch_session` sentinel file for accurate `last_activity` tracking
+- Hook writes last interaction time on each tool use
+- `_parse_naive()` helper for Z-suffix timestamp safety net
+
+### Fixed
+- Break enforcement was too aggressive — triggered after every session regardless of duration
+- Aligned `check_break`/`checkBreak` signatures across Python and JS
+- `end_session` now records `last_activity` from sentinel file
+
 ## [1.1.0] - 2026-02-22
 
 ### Added
