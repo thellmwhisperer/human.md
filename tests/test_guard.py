@@ -5,7 +5,7 @@ All times use Europe/London timezone to match the real human.md config.
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1192,6 +1192,137 @@ class TestLastActivity:
             session = next(s for s in data["sessions"] if s["id"] == sid)
             assert "T" in session["last_activity"], \
                 "epoch in activity file should be converted to ISO in last_activity"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_epoch_last_activity_is_local_not_utc(self, session_log_path, tmp_path):
+        """Epoch → ISO conversion must produce local time, not UTC.
+
+        The bug: fromtimestamp(epoch, tz=utc) stores UTC ISO. _parse_naive strips
+        tzinfo without converting, so check_break compares UTC-naive against
+        datetime.now() local-naive — inflating minutes_left by the tz offset.
+        """
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            epoch = 1740692901
+            (guard_dir / f".activity.{sid}").write_text(f"{epoch}\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+
+            stored = datetime.fromisoformat(session["last_activity"])
+            # When stripped of tz, it MUST equal local time (what datetime.now() returns)
+            expected_naive_local = datetime.fromtimestamp(epoch)
+            naive_from_stored = stored.replace(tzinfo=None)
+            assert naive_from_stored == expected_naive_local, (
+                f"last_activity naive form should be local time, "
+                f"got {naive_from_stored} expected {expected_naive_local}"
+            )
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_parse_naive_converts_nonlocal_tz_to_local(self, session_log_path):
+        """_parse_naive must convert aware datetimes to local, not just strip tz.
+
+        Uses an offset 5h away from local to guarantee the bug manifests
+        regardless of what timezone the test machine is in.
+        """
+        import time
+        # Get local UTC offset
+        local_offset_secs = -time.timezone if time.daylight == 0 else -time.altzone
+        # Build a tz 5 hours away from local — guaranteed to differ
+        fake_offset = timedelta(seconds=local_offset_secs + 5 * 3600)
+        fake_tz = timezone(fake_offset)
+
+        # A known instant: 2026-02-27T12:00:00 UTC
+        utc_instant = datetime(2026, 2, 27, 12, 0, tzinfo=timezone.utc)
+        # Express it in the fake (non-local) timezone
+        in_fake_tz = utc_instant.astimezone(fake_tz)
+        fake_str = in_fake_tz.isoformat()
+
+        result = human_guard._parse_naive(fake_str)
+
+        # Expected: local representation of the same UTC instant
+        expected_local = utc_instant.astimezone().replace(tzinfo=None)
+        assert result == expected_local, (
+            f"_parse_naive({fake_str}) should give local {expected_local}, got {result}. "
+            f"Bug: stripping tz without converting."
+        )
+
+    def test_check_break_with_utc_last_activity_no_inflation(self, session_log_path):
+        """check_break must not inflate minutes_left when last_activity is UTC ISO.
+
+        Reproduction of the reported bug: session with UTC last_activity,
+        now in local time, same instant → elapsed should be ~0, not tz_offset.
+        """
+        epoch = 1740692901  # fixed instant
+        local_time = datetime.fromtimestamp(epoch)  # same instant as local naive
+
+        data = {
+            "sessions": [{
+                "id": "tz-bug",
+                "start_time": (local_time - timedelta(hours=2)).isoformat(),
+                "end_time": local_time.isoformat(),
+                "last_activity": datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(),
+                "project_dir": "/tmp",
+                "work_since_break": 120,
+            }]
+        }
+        session_log_path.write_text(json.dumps(data))
+
+        # now = 10 minutes after the session ended (in local time)
+        now = local_time + timedelta(minutes=10)
+        result = human_guard.check_break(
+            session_log_path, min_break_minutes=15, now=now, max_continuous_minutes=150
+        )
+        # 120 min work >= 150 cap NOT met, so ok should be True regardless
+        # But with 120 work: cumulative 120 < 150, so no break needed.
+        # Let's use work_since_break=160 to trigger break enforcement
+        data["sessions"][0]["work_since_break"] = 160
+        session_log_path.write_text(json.dumps(data))
+
+        result = human_guard.check_break(
+            session_log_path, min_break_minutes=15, now=now, max_continuous_minutes=150
+        )
+        # 10 min elapsed, need 15 min break → 5 minutes left
+        assert result["ok"] is False
+        assert result["minutes_left"] == 5, (
+            f"minutes_left should be 5 (15-10), got {result['minutes_left']}. "
+            f"Likely timezone confusion between UTC last_activity and local now."
+        )
+
+    def test_wsb_rounding_half_up_parity_with_js(self, session_log_path, tmp_path):
+        """Python round(0.5)=0 (banker's) but JS Math.round(0.5)=1.
+
+        endSession must use round-half-up to maintain parity with JS.
+        """
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            # 30 seconds = 0.5 minutes → round-half-up = 1, banker's = 0
+            (guard_dir / f".work-since-break.{sid}").write_text("30\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 1, (
+                f"30s = 0.5min should round to 1 (JS parity), got {session['work_since_break']}"
+            )
         finally:
             human_guard.GUARD_DIR = orig
 

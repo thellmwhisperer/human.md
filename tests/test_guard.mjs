@@ -1630,4 +1630,18 @@ describe('Intra-session breaks', () => {
     assert.strictEqual(Math.floor(parsed.getTime() / 1000), 1740692901,
       'converted ISO should match original epoch');
   });
+
+  // --- Issue 3: rounding parity JS/Python at .5 boundary ---
+  it('endSession wsb rounding: 30 seconds (0.5 min) rounds to 1', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    // 30 seconds = 0.5 minutes → Math.round(0.5) = 1
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '30\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, 1,
+      '30s = 0.5min should round to 1 (Math.round rounds .5 up)');
+  });
 });

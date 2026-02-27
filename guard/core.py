@@ -407,8 +407,8 @@ def end_session(log_path, session_id):
                     # Activity file may contain epoch (new portable format) or ISO (old)
                     if raw.isdigit():
                         s["last_activity"] = datetime.fromtimestamp(
-                            int(raw), tz=timezone.utc
-                        ).isoformat()
+                            int(raw)
+                        ).astimezone().isoformat()
                     else:
                         s["last_activity"] = raw
                 with contextlib.suppress(OSError):
@@ -421,7 +421,8 @@ def end_session(log_path, session_id):
                 with contextlib.suppress(Exception):
                     val = int(wsb_file.read_text().strip())
                     # Sentinel stores seconds; convert to minutes for session log
-                    s["work_since_break"] = round(val / 60)
+                    # Use int(x + 0.5) for round-half-up (matches JS Math.round)
+                    s["work_since_break"] = int(val / 60 + 0.5)
                 with contextlib.suppress(OSError):
                     wsb_file.unlink()
             break
@@ -468,12 +469,16 @@ def cleanup_orphan_sessions(log_path, now=None):
 
 
 def _parse_naive(dt_str):
-    """Parse ISO datetime string to naive datetime, handling Z suffix."""
+    """Parse ISO datetime string to naive local datetime, handling Z suffix.
+
+    Aware datetimes are converted to local time before stripping tzinfo,
+    so the naive result is always comparable with datetime.now().
+    """
     if dt_str.endswith("Z"):
         dt_str = dt_str[:-1] + "+00:00"
     dt = datetime.fromisoformat(dt_str)
     if dt.tzinfo:
-        dt = dt.replace(tzinfo=None)
+        dt = dt.astimezone().replace(tzinfo=None)
     return dt
 
 
