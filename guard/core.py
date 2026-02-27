@@ -16,7 +16,7 @@ import contextlib
 import json
 import sys
 import uuid
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
