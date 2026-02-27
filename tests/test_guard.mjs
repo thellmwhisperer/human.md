@@ -1425,3 +1425,223 @@ describe('Last Activity', () => {
       'without sentinel, last_activity should equal end_time');
   });
 });
+
+// ===========================================================================
+// 5. Intra-session break detection
+// ===========================================================================
+
+describe('Intra-session breaks', () => {
+  let tmpDir, logPath, guardDir, origGuardDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    logPath = join(tmpDir, 'session-log.json');
+    guardDir = join(tmpDir, 'human-guard');
+    mkdirSync(guardDir, { recursive: true });
+    origGuardDir = _setGuardDirForTest(guardDir);
+  });
+
+  afterEach(() => {
+    _setGuardDirForTest(origGuardDir);
+  });
+
+  // --- The bug: session open during family block ---
+  // Session open 10:56 → 22:29 (11h33m wall clock)
+  // But user was away 18:00-21:00 (family block, 3h idle)
+  // Actual work since last break: 21:00 → 22:28 = 88 min
+  // checkBreak should NOT require a break (88 < 150)
+  it('long session with intra-session break → no break required', () => {
+    const now = fakeNow(2026, 2, 27, 22, 30);
+    const logData = {
+      sessions: [{
+        id: 'long-session',
+        start_time: '2026-02-27T10:56:00',
+        end_time: '2026-02-27T22:29:00',
+        last_activity: '2026-02-27T22:28:00',
+        work_since_break: 88,  // 21:00 → 22:28
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, true,
+      'work_since_break (88 min) < 150 → no break required');
+  });
+
+  // --- work_since_break exceeds limit → break required ---
+  it('work_since_break exceeds max → break required', () => {
+    const now = fakeNow(2026, 2, 27, 22, 35);
+    const logData = {
+      sessions: [{
+        id: 'marathon',
+        start_time: '2026-02-27T18:00:00',
+        end_time: '2026-02-27T22:32:00',
+        last_activity: '2026-02-27T22:31:00',
+        work_since_break: 272,  // 4.5h continuous
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, false,
+      'work_since_break (272 min) >= 150 → break required');
+  });
+
+  // --- Backwards compat: no work_since_break field → falls back to end-start ---
+  it('no work_since_break → falls back to end-start (backwards compat)', () => {
+    const now = fakeNow(2026, 2, 27, 22, 35);
+    const logData = {
+      sessions: [{
+        id: 'old-format',
+        start_time: '2026-02-27T10:56:00',
+        end_time: '2026-02-27T22:29:00',
+        last_activity: '2026-02-27T22:28:00',
+        // No work_since_break field — old session format
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, false,
+      'without work_since_break, uses end-start (693 min) — break required (old behavior)');
+  });
+
+  // --- Chaining: work_since_break chains across sessions ---
+  it('work_since_break chains across sessions without sufficient gap', () => {
+    const now = fakeNow(2026, 2, 27, 23, 40);
+    const logData = {
+      sessions: [
+        {
+          id: 'session-a',
+          start_time: '2026-02-27T21:00:00',
+          end_time: '2026-02-27T23:00:00',
+          last_activity: '2026-02-27T22:58:00',
+          work_since_break: 118,
+          project_dir: '/tmp',
+          forced: false,
+        },
+        {
+          id: 'session-b',
+          start_time: '2026-02-27T23:05:00',
+          end_time: '2026-02-27T23:37:00',
+          last_activity: '2026-02-27T23:36:00',
+          work_since_break: 32,
+          project_dir: '/tmp',
+          forced: false,
+        },
+      ],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, false,
+      '118 + 32 = 150 min cumulative (gap 7min < 15min) → break required');
+  });
+
+  // --- endSession reads work-since-break sentinel (seconds → minutes) ---
+  it('endSession reads work-since-break sentinel', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // Simulate hook writing sentinels — sentinel stores seconds
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '5280\n'); // 88 minutes in seconds
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, 88,
+      'endSession should convert work-since-break from seconds to minutes');
+    assert.ok(!existsSync(join(guardDir, `.work-since-break.${sid}`)),
+      'work-since-break sentinel should be cleaned up');
+  });
+
+  // --- endSession without work-since-break sentinel → no field ---
+  it('endSession without work-since-break sentinel → no field added', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    writeFileSync(join(guardDir, `.activity.${sid}`), '2026-02-27T22:28:00\n');
+    // No work-since-break sentinel
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, undefined,
+      'without sentinel, work_since_break should not be set');
+  });
+
+  // --- computeSessionState includes min_break_seconds ---
+  it('computeSessionState includes min_break_seconds', () => {
+    const config = parseYaml(SAMPLE_YAML);
+    const now = Math.floor(fakeNow(2026, 2, 27, 12, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.strictEqual(state.min_break_seconds, 900,
+      'min_break_seconds should be 15 * 60 = 900');
+  });
+
+  // --- Bug: "Need 0 more minutes" still blocks ---
+  it('minutes_left is at least 1 when blocked', () => {
+    // elapsed = 14.9 min, minBreak = 15 → still blocked but floor gives 0
+    const now = fakeNow(2026, 2, 27, 22, 44);  // 14.9 min after last activity
+    const logData = {
+      sessions: [{
+        id: 'edge-case',
+        start_time: '2026-02-27T19:00:00',
+        end_time: '2026-02-27T22:29:00',
+        last_activity: new Date(now.getTime() - 14.9 * 60 * 1000).toISOString(),
+        project_dir: '/tmp',
+        forced: false,
+      }],
+    };
+    writeFileSync(logPath, JSON.stringify(logData));
+    const result = checkBreak(logPath, 15, now, 150);
+    assert.strictEqual(result.ok, false, 'should still be blocked at 14.9 min');
+    assert.ok(result.minutes_left >= 1,
+      '"Need 0 more minutes" is a bug — should be at least 1 when blocked');
+  });
+
+  // --- Issue 1: work-since-break sentinel stores seconds, not minutes ---
+  it('endSession converts work-since-break seconds to minutes', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    // 5400 seconds = 90 minutes of work
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '5400\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, 90,
+      'work-since-break sentinel stores seconds — endSession should convert to minutes');
+  });
+
+  // --- Issue 2: activity file may contain epoch instead of ISO ---
+  it('endSession handles epoch-format activity file', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // Hook now writes epoch (portable) instead of ISO
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    // Should be converted to ISO string
+    assert.ok(session.last_activity.includes('T'),
+      'epoch in activity file should be converted to ISO in last_activity');
+    // Verify the epoch maps to the right timestamp
+    const parsed = new Date(session.last_activity);
+    assert.strictEqual(Math.floor(parsed.getTime() / 1000), 1740692901,
+      'converted ISO should match original epoch');
+  });
+
+  // --- Issue 3: rounding parity JS/Python at .5 boundary ---
+  it('endSession wsb rounding: 30 seconds (0.5 min) rounds to 1', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    // 30 seconds = 0.5 minutes → Math.round(0.5) = 1
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '30\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, 1,
+      '30s = 0.5min should round to 1 (Math.round rounds .5 up)');
+  });
+});

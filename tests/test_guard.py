@@ -5,7 +5,7 @@ All times use Europe/London timezone to match the real human.md config.
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -998,6 +998,334 @@ class TestLastActivity:
         assert result["ok"] is True, \
             "32 min break resets counter — 63 min since break is below 150 limit"
 
+    # --- Intra-session break detection ---
+
+    def test_long_session_with_intra_session_break_no_break_required(self, session_log_path):
+        """Session open 11h33m but user idle 3h during family block.
+        work_since_break=88min (< 150) → no break required."""
+        now = datetime(2026, 2, 27, 22, 30)
+        log_data = {
+            "sessions": [{
+                "id": "long-session",
+                "start_time": "2026-02-27T10:56:00",
+                "end_time": "2026-02-27T22:29:00",
+                "last_activity": "2026-02-27T22:28:00",
+                "work_since_break": 88,
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is True, \
+            "work_since_break (88 min) < 150 → no break required"
+
+    def test_work_since_break_exceeds_max_break_required(self, session_log_path):
+        """work_since_break exceeds max_continuous_minutes → break required."""
+        now = datetime(2026, 2, 27, 22, 35)
+        log_data = {
+            "sessions": [{
+                "id": "marathon",
+                "start_time": "2026-02-27T18:00:00",
+                "end_time": "2026-02-27T22:32:00",
+                "last_activity": "2026-02-27T22:31:00",
+                "work_since_break": 272,
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "work_since_break (272 min) >= 150 → break required"
+
+    def test_no_work_since_break_falls_back_to_wall_clock(self, session_log_path):
+        """No work_since_break field → falls back to end-start (backwards compat)."""
+        now = datetime(2026, 2, 27, 22, 35)
+        log_data = {
+            "sessions": [{
+                "id": "old-format",
+                "start_time": "2026-02-27T10:56:00",
+                "end_time": "2026-02-27T22:29:00",
+                "last_activity": "2026-02-27T22:28:00",
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "without work_since_break, uses end-start (693 min) — break required"
+
+    def test_work_since_break_chains_across_sessions(self, session_log_path):
+        """work_since_break chains across sessions when gap < min_break_minutes."""
+        now = datetime(2026, 2, 27, 23, 40)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "session-a",
+                    "start_time": "2026-02-27T21:00:00",
+                    "end_time": "2026-02-27T23:00:00",
+                    "last_activity": "2026-02-27T22:58:00",
+                    "work_since_break": 118,
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "session-b",
+                    "start_time": "2026-02-27T23:05:00",
+                    "end_time": "2026-02-27T23:37:00",
+                    "last_activity": "2026-02-27T23:36:00",
+                    "work_since_break": 32,
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "118 + 32 = 150 min cumulative (gap 7min < 15min) → break required"
+
+    def test_end_session_reads_work_since_break_sentinel(self, session_log_path, tmp_path):
+        """end_session should read .work-since-break sentinel and store as integer."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            (guard_dir / f".work-since-break.{sid}").write_text("5280\n")  # 88 min in secs
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 88, \
+                "endSession should convert work-since-break from seconds to minutes"
+            assert not (guard_dir / f".work-since-break.{sid}").exists(), \
+                "work-since-break sentinel should be cleaned up"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_without_wsb_sentinel_no_field(self, session_log_path, tmp_path):
+        """Without work-since-break sentinel, field should not be set."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("2026-02-27T22:28:00\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert "work_since_break" not in session, \
+                "without sentinel, work_since_break should not be set"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_converts_wsb_seconds_to_minutes(self, session_log_path, tmp_path):
+        """work-since-break sentinel stores seconds — endSession converts to minutes."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            (guard_dir / f".work-since-break.{sid}").write_text("5400\n")  # 90 minutes
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 90, \
+                "work-since-break sentinel stores seconds — endSession should convert to minutes"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_handles_epoch_activity_file(self, session_log_path, tmp_path):
+        """Activity file may contain epoch (portable) instead of ISO."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert "T" in session["last_activity"], \
+                "epoch in activity file should be converted to ISO in last_activity"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_epoch_last_activity_is_local_not_utc(self, session_log_path, tmp_path):
+        """Epoch → ISO conversion must produce local time, not UTC.
+
+        The bug: fromtimestamp(epoch, tz=utc) stores UTC ISO. _parse_naive strips
+        tzinfo without converting, so check_break compares UTC-naive against
+        datetime.now() local-naive — inflating minutes_left by the tz offset.
+        """
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            epoch = 1740692901
+            (guard_dir / f".activity.{sid}").write_text(f"{epoch}\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+
+            stored = datetime.fromisoformat(session["last_activity"])
+            # When stripped of tz, it MUST equal local time (what datetime.now() returns)
+            expected_naive_local = datetime.fromtimestamp(epoch)
+            naive_from_stored = stored.replace(tzinfo=None)
+            assert naive_from_stored == expected_naive_local, (
+                f"last_activity naive form should be local time, "
+                f"got {naive_from_stored} expected {expected_naive_local}"
+            )
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_parse_naive_converts_nonlocal_tz_to_local(self, session_log_path):
+        """_parse_naive must convert aware datetimes to local, not just strip tz.
+
+        Uses an offset 5h away from local to guarantee the bug manifests
+        regardless of what timezone the test machine is in.
+        """
+        import time
+        # Get local UTC offset
+        local_offset_secs = -time.timezone if time.daylight == 0 else -time.altzone
+        # Build a tz 5 hours away from local — guaranteed to differ
+        fake_offset = timedelta(seconds=local_offset_secs + 5 * 3600)
+        fake_tz = timezone(fake_offset)
+
+        # A known instant: 2026-02-27T12:00:00 UTC
+        utc_instant = datetime(2026, 2, 27, 12, 0, tzinfo=timezone.utc)
+        # Express it in the fake (non-local) timezone
+        in_fake_tz = utc_instant.astimezone(fake_tz)
+        fake_str = in_fake_tz.isoformat()
+
+        result = human_guard._parse_naive(fake_str)
+
+        # Expected: local representation of the same UTC instant
+        expected_local = utc_instant.astimezone().replace(tzinfo=None)
+        assert result == expected_local, (
+            f"_parse_naive({fake_str}) should give local {expected_local}, got {result}. "
+            f"Bug: stripping tz without converting."
+        )
+
+    def test_check_break_with_utc_last_activity_no_inflation(self, session_log_path):
+        """check_break must not inflate minutes_left when last_activity is UTC ISO.
+
+        Reproduction of the reported bug: session with UTC last_activity,
+        now in local time, same instant → elapsed should be ~0, not tz_offset.
+        """
+        epoch = 1740692901  # fixed instant
+        local_time = datetime.fromtimestamp(epoch)  # same instant as local naive
+
+        data = {
+            "sessions": [{
+                "id": "tz-bug",
+                "start_time": (local_time - timedelta(hours=2)).isoformat(),
+                "end_time": local_time.isoformat(),
+                "last_activity": datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(),
+                "project_dir": "/tmp",
+                "work_since_break": 120,
+            }]
+        }
+        session_log_path.write_text(json.dumps(data))
+
+        # now = 10 minutes after the session ended (in local time)
+        now = local_time + timedelta(minutes=10)
+        result = human_guard.check_break(
+            session_log_path, min_break_minutes=15, now=now, max_continuous_minutes=150
+        )
+        # 120 min work >= 150 cap NOT met, so ok should be True regardless
+        # But with 120 work: cumulative 120 < 150, so no break needed.
+        # Let's use work_since_break=160 to trigger break enforcement
+        data["sessions"][0]["work_since_break"] = 160
+        session_log_path.write_text(json.dumps(data))
+
+        result = human_guard.check_break(
+            session_log_path, min_break_minutes=15, now=now, max_continuous_minutes=150
+        )
+        # 10 min elapsed, need 15 min break → 5 minutes left
+        assert result["ok"] is False
+        assert result["minutes_left"] == 5, (
+            f"minutes_left should be 5 (15-10), got {result['minutes_left']}. "
+            f"Likely timezone confusion between UTC last_activity and local now."
+        )
+
+    def test_wsb_rounding_half_up_parity_with_js(self, session_log_path, tmp_path):
+        """Python round(0.5)=0 (banker's) but JS Math.round(0.5)=1.
+
+        endSession must use round-half-up to maintain parity with JS.
+        """
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            # 30 seconds = 0.5 minutes → round-half-up = 1, banker's = 0
+            (guard_dir / f".work-since-break.{sid}").write_text("30\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 1, (
+                f"30s = 0.5min should round to 1 (JS parity), got {session['work_since_break']}"
+            )
+        finally:
+            human_guard.GUARD_DIR = orig
+
 
 # ===========================================================================
 # 2c. Notification markers — lifecycle
@@ -1214,6 +1542,19 @@ class TestCheckIntegration:
         assert "outside_hours" in state["messages"]
         assert "break_reminder" in state["messages"]
         assert "blocked_period" in state["messages"]
+
+    def test_session_state_has_min_break_seconds(self, config_file, session_state_path, session_log_path):
+        """Session state includes min_break_seconds for hook intra-session break detection."""
+        human_guard.check(
+            config_paths=[config_file],
+            state_path=session_state_path,
+            log_path=session_log_path,
+            force=False,
+            now=datetime(2026, 2, 22, 12, 0),
+        )
+        state = json.loads(session_state_path.read_text())
+        assert state["min_break_seconds"] == 900, \
+            "min_break_seconds should be 15 * 60 = 900"
 
 
 class TestOvernightBlockedPeriods:

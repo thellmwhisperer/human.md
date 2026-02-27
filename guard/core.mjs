@@ -406,12 +406,28 @@ export function endSession(logPath, sessionId) {
       const activityFile = join(GUARD_DIR, `.activity.${sessionId}`);
       if (existsSync(activityFile)) {
         try {
-          s.last_activity = readFileSync(activityFile, 'utf-8').trim();
+          const raw = readFileSync(activityFile, 'utf-8').trim();
+          // Activity file may contain epoch (new portable format) or ISO (old format)
+          if (/^\d+$/.test(raw)) {
+            s.last_activity = new Date(parseInt(raw, 10) * 1000).toISOString();
+          } else {
+            s.last_activity = raw;
+          }
         } catch { /* ignore */ }
         try { unlinkSync(activityFile); } catch { /* ignore */ }
       }
       if (!s.last_activity) {
         s.last_activity = s.end_time;
+      }
+      // Read work_since_break from sentinel (written by hook on intra-session break detection)
+      const wsbFile = join(GUARD_DIR, `.work-since-break.${sessionId}`);
+      if (existsSync(wsbFile)) {
+        try {
+          const val = parseInt(readFileSync(wsbFile, 'utf-8').trim(), 10);
+          // Sentinel stores seconds; convert to minutes for session log
+          if (!isNaN(val)) s.work_since_break = Math.round(val / 60);
+        } catch { /* ignore */ }
+        try { unlinkSync(wsbFile); } catch { /* ignore */ }
       }
       break;
     }
@@ -491,13 +507,18 @@ export function checkBreak(logPath, minBreakMinutes, now = null, maxContinuousMi
       if (gapMin >= minBreakMinutes) break;
     }
 
-    const durationMin = (end.getTime() - start.getTime()) / 60000;
-    if (durationMin < minBreakMinutes) {
+    const wallClockMin = (end.getTime() - start.getTime()) / 60000;
+    if (wallClockMin < minBreakMinutes) {
       // Trivial sessions still interrupt gap chaining
       prevSessionStart = start;
       continue;
     }
 
+    // Use work_since_break if available (intra-session break detection),
+    // otherwise fall back to wall-clock duration
+    const durationMin = (typeof s.work_since_break === 'number')
+      ? s.work_since_break
+      : wallClockMin;
     cumulativeWork += durationMin;
     if (lastInteraction === null) lastInteraction = sessionInteraction;
     prevSessionStart = start;
@@ -514,7 +535,7 @@ export function checkBreak(logPath, minBreakMinutes, now = null, maxContinuousMi
   if (elapsedMin >= minBreakMinutes) {
     return { ok: true, minutes_left: 0 };
   }
-  return { ok: false, minutes_left: Math.floor(minBreakMinutes - elapsedMin) };
+  return { ok: false, minutes_left: Math.ceil(minBreakMinutes - elapsedMin) };
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +657,8 @@ export function computeSessionState(config, nowEpoch, tz) {
     });
   }
 
+  const minBreakMin = sessions.min_break_minutes || 15;
+
   return {
     session_id: randomUUID().replace(/-/g, '').slice(0, 8),
     start_epoch: nowEpoch,
@@ -643,6 +666,7 @@ export function computeSessionState(config, nowEpoch, tz) {
     warn_epoch: warnEpoch,
     wind_down_epoch: windDownEpoch,
     end_allowed_epoch: endEpoch,
+    min_break_seconds: minBreakMin * 60,
     blocked_periods: blockedPeriods,
     enforcement: config.enforcement || 'soft',
     messages: {
