@@ -406,7 +406,13 @@ export function endSession(logPath, sessionId) {
       const activityFile = join(GUARD_DIR, `.activity.${sessionId}`);
       if (existsSync(activityFile)) {
         try {
-          s.last_activity = readFileSync(activityFile, 'utf-8').trim();
+          const raw = readFileSync(activityFile, 'utf-8').trim();
+          // Activity file may contain epoch (new portable format) or ISO (old format)
+          if (/^\d+$/.test(raw)) {
+            s.last_activity = new Date(parseInt(raw, 10) * 1000).toISOString();
+          } else {
+            s.last_activity = raw;
+          }
         } catch { /* ignore */ }
         try { unlinkSync(activityFile); } catch { /* ignore */ }
       }
@@ -418,7 +424,8 @@ export function endSession(logPath, sessionId) {
       if (existsSync(wsbFile)) {
         try {
           const val = parseInt(readFileSync(wsbFile, 'utf-8').trim(), 10);
-          if (!isNaN(val)) s.work_since_break = val;
+          // Sentinel stores seconds; convert to minutes for session log
+          if (!isNaN(val)) s.work_since_break = Math.round(val / 60);
         } catch { /* ignore */ }
         try { unlinkSync(wsbFile); } catch { /* ignore */ }
       }

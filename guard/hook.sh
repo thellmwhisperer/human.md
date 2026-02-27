@@ -35,10 +35,10 @@ if [ -n "$SID" ]; then
   WSB_FILE="$NOTIFY_DIR/.work-since-break.$SID"
 
   # Read previous activity to detect idle gaps
+  # Activity file stores epoch (portable, no date parsing needed)
   if [ -f "$ACTIVITY_FILE" ]; then
-    PREV_TS=$(cat "$ACTIVITY_FILE" 2>/dev/null)
-    PREV_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$PREV_TS" +%s 2>/dev/null || echo 0)
-    if [ "$PREV_EPOCH" -gt 0 ]; then
+    PREV_EPOCH=$(cat "$ACTIVITY_FILE" 2>/dev/null || echo 0)
+    if [ "$PREV_EPOCH" -gt 0 ] 2>/dev/null; then
       GAP=$(( NOW - PREV_EPOCH ))
       MIN_BREAK_SECS=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
       PREV_WSB=$(cat "$WSB_FILE" 2>/dev/null || echo 0)
@@ -46,14 +46,14 @@ if [ -n "$SID" ]; then
         # Intra-session break detected — reset work counter
         echo "0" > "$WSB_FILE" 2>/dev/null
       else
-        # Continuous work — accumulate minutes
-        GAP_MIN=$(( GAP / 60 ))
-        echo "$(( PREV_WSB + GAP_MIN ))" > "$WSB_FILE" 2>/dev/null
+        # Continuous work — accumulate seconds (converted to minutes by endSession)
+        echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null
       fi
     fi
   fi
 
-  date +%Y-%m-%dT%H:%M:%S > "$ACTIVITY_FILE" 2>/dev/null
+  # Store epoch (portable across BSD/GNU — no date format parsing needed)
+  echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
 fi
 
 # Emit a one-shot systemMessage (only when session-managed).

@@ -1118,14 +1118,14 @@ class TestLastActivity:
                 log_path=session_log_path,
                 project_dir="/tmp",
             )
-            (guard_dir / f".activity.{sid}").write_text("2026-02-27T22:28:00\n")
-            (guard_dir / f".work-since-break.{sid}").write_text("88\n")
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            (guard_dir / f".work-since-break.{sid}").write_text("5280\n")  # 88 min in secs
 
             human_guard.end_session(log_path=session_log_path, session_id=sid)
             data = json.loads(session_log_path.read_text())
             session = next(s for s in data["sessions"] if s["id"] == sid)
             assert session["work_since_break"] == 88, \
-                "endSession should read work-since-break sentinel as integer"
+                "endSession should convert work-since-break from seconds to minutes"
             assert not (guard_dir / f".work-since-break.{sid}").exists(), \
                 "work-since-break sentinel should be cleaned up"
         finally:
@@ -1149,6 +1149,49 @@ class TestLastActivity:
             session = next(s for s in data["sessions"] if s["id"] == sid)
             assert "work_since_break" not in session, \
                 "without sentinel, work_since_break should not be set"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_converts_wsb_seconds_to_minutes(self, session_log_path, tmp_path):
+        """work-since-break sentinel stores seconds — endSession converts to minutes."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+            (guard_dir / f".work-since-break.{sid}").write_text("5400\n")  # 90 minutes
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 90, \
+                "work-since-break sentinel stores seconds — endSession should convert to minutes"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_handles_epoch_activity_file(self, session_log_path, tmp_path):
+        """Activity file may contain epoch (portable) instead of ISO."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("1740692901\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert "T" in session["last_activity"], \
+                "epoch in activity file should be converted to ISO in last_activity"
         finally:
             human_guard.GUARD_DIR = orig
 

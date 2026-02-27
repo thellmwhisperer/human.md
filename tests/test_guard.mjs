@@ -1540,18 +1540,18 @@ describe('Intra-session breaks', () => {
       '118 + 32 = 150 min cumulative (gap 7min < 15min) → break required');
   });
 
-  // --- endSession reads work-since-break sentinel ---
+  // --- endSession reads work-since-break sentinel (seconds → minutes) ---
   it('endSession reads work-since-break sentinel', () => {
     const sid = startSession(logPath, '/tmp', false);
-    // Simulate hook writing sentinels
-    writeFileSync(join(guardDir, `.activity.${sid}`), '2026-02-27T22:28:00\n');
-    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '88\n');
+    // Simulate hook writing sentinels — sentinel stores seconds
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '5280\n'); // 88 minutes in seconds
 
     endSession(logPath, sid);
     const data = JSON.parse(readFileSync(logPath, 'utf-8'));
     const session = data.sessions.find(s => s.id === sid);
     assert.strictEqual(session.work_since_break, 88,
-      'endSession should read work-since-break sentinel as integer');
+      'endSession should convert work-since-break from seconds to minutes');
     assert.ok(!existsSync(join(guardDir, `.work-since-break.${sid}`)),
       'work-since-break sentinel should be cleaned up');
   });
@@ -1597,5 +1597,37 @@ describe('Intra-session breaks', () => {
     assert.strictEqual(result.ok, false, 'should still be blocked at 14.9 min');
     assert.ok(result.minutes_left >= 1,
       '"Need 0 more minutes" is a bug — should be at least 1 when blocked');
+  });
+
+  // --- Issue 1: work-since-break sentinel stores seconds, not minutes ---
+  it('endSession converts work-since-break seconds to minutes', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+    // 5400 seconds = 90 minutes of work
+    writeFileSync(join(guardDir, `.work-since-break.${sid}`), '5400\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    assert.strictEqual(session.work_since_break, 90,
+      'work-since-break sentinel stores seconds — endSession should convert to minutes');
+  });
+
+  // --- Issue 2: activity file may contain epoch instead of ISO ---
+  it('endSession handles epoch-format activity file', () => {
+    const sid = startSession(logPath, '/tmp', false);
+    // Hook now writes epoch (portable) instead of ISO
+    writeFileSync(join(guardDir, `.activity.${sid}`), '1740692901\n');
+
+    endSession(logPath, sid);
+    const data = JSON.parse(readFileSync(logPath, 'utf-8'));
+    const session = data.sessions.find(s => s.id === sid);
+    // Should be converted to ISO string
+    assert.ok(session.last_activity.includes('T'),
+      'epoch in activity file should be converted to ISO in last_activity');
+    // Verify the epoch maps to the right timestamp
+    const parsed = new Date(session.last_activity);
+    assert.strictEqual(Math.floor(parsed.getTime() / 1000), 1740692901,
+      'converted ISO should match original epoch');
   });
 });

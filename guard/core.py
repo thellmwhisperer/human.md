@@ -16,7 +16,7 @@ import contextlib
 import json
 import sys
 import uuid
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -403,7 +403,14 @@ def end_session(log_path, session_id):
             activity_file = GUARD_DIR / f".activity.{session_id}"
             if activity_file.exists():
                 with contextlib.suppress(Exception):
-                    s["last_activity"] = activity_file.read_text().strip()
+                    raw = activity_file.read_text().strip()
+                    # Activity file may contain epoch (new portable format) or ISO (old)
+                    if raw.isdigit():
+                        s["last_activity"] = datetime.fromtimestamp(
+                            int(raw), tz=timezone.utc
+                        ).isoformat()
+                    else:
+                        s["last_activity"] = raw
                 with contextlib.suppress(OSError):
                     activity_file.unlink()
             if not s.get("last_activity"):
@@ -413,7 +420,8 @@ def end_session(log_path, session_id):
             if wsb_file.exists():
                 with contextlib.suppress(Exception):
                     val = int(wsb_file.read_text().strip())
-                    s["work_since_break"] = val
+                    # Sentinel stores seconds; convert to minutes for session log
+                    s["work_since_break"] = round(val / 60)
                 with contextlib.suppress(OSError):
                     wsb_file.unlink()
             break
