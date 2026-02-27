@@ -998,6 +998,160 @@ class TestLastActivity:
         assert result["ok"] is True, \
             "32 min break resets counter — 63 min since break is below 150 limit"
 
+    # --- Intra-session break detection ---
+
+    def test_long_session_with_intra_session_break_no_break_required(self, session_log_path):
+        """Session open 11h33m but user idle 3h during family block.
+        work_since_break=88min (< 150) → no break required."""
+        now = datetime(2026, 2, 27, 22, 30)
+        log_data = {
+            "sessions": [{
+                "id": "long-session",
+                "start_time": "2026-02-27T10:56:00",
+                "end_time": "2026-02-27T22:29:00",
+                "last_activity": "2026-02-27T22:28:00",
+                "work_since_break": 88,
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is True, \
+            "work_since_break (88 min) < 150 → no break required"
+
+    def test_work_since_break_exceeds_max_break_required(self, session_log_path):
+        """work_since_break exceeds max_continuous_minutes → break required."""
+        now = datetime(2026, 2, 27, 22, 35)
+        log_data = {
+            "sessions": [{
+                "id": "marathon",
+                "start_time": "2026-02-27T18:00:00",
+                "end_time": "2026-02-27T22:32:00",
+                "last_activity": "2026-02-27T22:31:00",
+                "work_since_break": 272,
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "work_since_break (272 min) >= 150 → break required"
+
+    def test_no_work_since_break_falls_back_to_wall_clock(self, session_log_path):
+        """No work_since_break field → falls back to end-start (backwards compat)."""
+        now = datetime(2026, 2, 27, 22, 35)
+        log_data = {
+            "sessions": [{
+                "id": "old-format",
+                "start_time": "2026-02-27T10:56:00",
+                "end_time": "2026-02-27T22:29:00",
+                "last_activity": "2026-02-27T22:28:00",
+                "project_dir": "/tmp",
+                "forced": False,
+            }]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "without work_since_break, uses end-start (693 min) — break required"
+
+    def test_work_since_break_chains_across_sessions(self, session_log_path):
+        """work_since_break chains across sessions when gap < min_break_minutes."""
+        now = datetime(2026, 2, 27, 23, 40)
+        log_data = {
+            "sessions": [
+                {
+                    "id": "session-a",
+                    "start_time": "2026-02-27T21:00:00",
+                    "end_time": "2026-02-27T23:00:00",
+                    "last_activity": "2026-02-27T22:58:00",
+                    "work_since_break": 118,
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+                {
+                    "id": "session-b",
+                    "start_time": "2026-02-27T23:05:00",
+                    "end_time": "2026-02-27T23:37:00",
+                    "last_activity": "2026-02-27T23:36:00",
+                    "work_since_break": 32,
+                    "project_dir": "/tmp",
+                    "forced": False,
+                },
+            ]
+        }
+        session_log_path.write_text(json.dumps(log_data))
+        result = human_guard.check_break(
+            log_path=session_log_path,
+            min_break_minutes=15,
+            max_continuous_minutes=150,
+            now=now,
+        )
+        assert result["ok"] is False, \
+            "118 + 32 = 150 min cumulative (gap 7min < 15min) → break required"
+
+    def test_end_session_reads_work_since_break_sentinel(self, session_log_path, tmp_path):
+        """end_session should read .work-since-break sentinel and store as integer."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("2026-02-27T22:28:00\n")
+            (guard_dir / f".work-since-break.{sid}").write_text("88\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert session["work_since_break"] == 88, \
+                "endSession should read work-since-break sentinel as integer"
+            assert not (guard_dir / f".work-since-break.{sid}").exists(), \
+                "work-since-break sentinel should be cleaned up"
+        finally:
+            human_guard.GUARD_DIR = orig
+
+    def test_end_session_without_wsb_sentinel_no_field(self, session_log_path, tmp_path):
+        """Without work-since-break sentinel, field should not be set."""
+        guard_dir = tmp_path / "human-guard"
+        guard_dir.mkdir()
+        orig = human_guard.GUARD_DIR
+        human_guard.GUARD_DIR = guard_dir
+        try:
+            sid = human_guard.start_session(
+                log_path=session_log_path,
+                project_dir="/tmp",
+            )
+            (guard_dir / f".activity.{sid}").write_text("2026-02-27T22:28:00\n")
+
+            human_guard.end_session(log_path=session_log_path, session_id=sid)
+            data = json.loads(session_log_path.read_text())
+            session = next(s for s in data["sessions"] if s["id"] == sid)
+            assert "work_since_break" not in session, \
+                "without sentinel, work_since_break should not be set"
+        finally:
+            human_guard.GUARD_DIR = orig
+
 
 # ===========================================================================
 # 2c. Notification markers — lifecycle
@@ -1214,6 +1368,19 @@ class TestCheckIntegration:
         assert "outside_hours" in state["messages"]
         assert "break_reminder" in state["messages"]
         assert "blocked_period" in state["messages"]
+
+    def test_session_state_has_min_break_seconds(self, config_file, session_state_path, session_log_path):
+        """Session state includes min_break_seconds for hook intra-session break detection."""
+        human_guard.check(
+            config_paths=[config_file],
+            state_path=session_state_path,
+            log_path=session_log_path,
+            force=False,
+            now=datetime(2026, 2, 22, 12, 0),
+        )
+        state = json.loads(session_state_path.read_text())
+        assert state["min_break_seconds"] == 900, \
+            "min_break_seconds should be 15 * 60 = 900"
 
 
 class TestOvernightBlockedPeriods:

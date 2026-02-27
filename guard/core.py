@@ -408,6 +408,14 @@ def end_session(log_path, session_id):
                     activity_file.unlink()
             if not s.get("last_activity"):
                 s["last_activity"] = s["end_time"]
+            # Read work_since_break from sentinel (written by hook on intra-session break detection)
+            wsb_file = GUARD_DIR / f".work-since-break.{session_id}"
+            if wsb_file.exists():
+                with contextlib.suppress(Exception):
+                    val = int(wsb_file.read_text().strip())
+                    s["work_since_break"] = val
+                with contextlib.suppress(OSError):
+                    wsb_file.unlink()
             break
     _save_log(log_path, data)
     _clean_notification_markers(session_id)
@@ -518,11 +526,16 @@ def check_break(log_path, min_break_minutes, now=None, max_continuous_minutes=15
                 if gap >= min_break_minutes:
                     break  # Real break found — stop accumulating
 
-            duration_min = (end - start).total_seconds() / 60
-            if duration_min < min_break_minutes:
+            wall_clock_min = (end - start).total_seconds() / 60
+            if wall_clock_min < min_break_minutes:
                 # Trivial sessions still interrupt gap chaining
                 prev_session_start = start
                 continue
+
+            # Use work_since_break if available (intra-session break detection),
+            # otherwise fall back to wall-clock duration
+            wsb = s.get("work_since_break")
+            duration_min = wsb if isinstance(wsb, (int, float)) else wall_clock_min
 
             cumulative_work += duration_min
             if last_interaction is None:
@@ -542,7 +555,8 @@ def check_break(log_path, min_break_minutes, now=None, max_continuous_minutes=15
     if elapsed >= min_break_minutes:
         return {"ok": True, "minutes_left": 0}
     else:
-        return {"ok": False, "minutes_left": int(min_break_minutes - elapsed)}
+        import math
+        return {"ok": False, "minutes_left": math.ceil(min_break_minutes - elapsed)}
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +640,8 @@ def compute_session_state(config, now_dt, tz):
             "end_epoch": bp_end_epoch,
         })
 
+    min_break_min = sessions.get("min_break_minutes", 15)
+
     return {
         "session_id": uuid.uuid4().hex[:8],
         "start_epoch": now_epoch,
@@ -633,6 +649,7 @@ def compute_session_state(config, now_dt, tz):
         "warn_epoch": warn_epoch,
         "wind_down_epoch": wind_down_epoch,
         "end_allowed_epoch": end_epoch,
+        "min_break_seconds": min_break_min * 60,
         "blocked_periods": blocked_periods,
         "enforcement": config.get("enforcement", "soft"),
         "messages": {

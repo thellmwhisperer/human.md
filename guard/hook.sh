@@ -28,10 +28,32 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< 
 NOTIFY_DIR="$HOME/.claude/human-guard"
 SID="${HUMAN_GUARD_SESSION_ID:-}"
 
-# Touch session activity (lightweight sentinel file, no JSON race)
+# Touch session activity + detect intra-session breaks
 if [ -n "$SID" ]; then
   mkdir -p "$NOTIFY_DIR" 2>/dev/null || true
-  date +%Y-%m-%dT%H:%M:%S > "$NOTIFY_DIR/.activity.$SID" 2>/dev/null
+  ACTIVITY_FILE="$NOTIFY_DIR/.activity.$SID"
+  WSB_FILE="$NOTIFY_DIR/.work-since-break.$SID"
+
+  # Read previous activity to detect idle gaps
+  if [ -f "$ACTIVITY_FILE" ]; then
+    PREV_TS=$(cat "$ACTIVITY_FILE" 2>/dev/null)
+    PREV_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$PREV_TS" +%s 2>/dev/null || echo 0)
+    if [ "$PREV_EPOCH" -gt 0 ]; then
+      GAP=$(( NOW - PREV_EPOCH ))
+      MIN_BREAK_SECS=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
+      PREV_WSB=$(cat "$WSB_FILE" 2>/dev/null || echo 0)
+      if [ "$GAP" -ge "$MIN_BREAK_SECS" ]; then
+        # Intra-session break detected — reset work counter
+        echo "0" > "$WSB_FILE" 2>/dev/null
+      else
+        # Continuous work — accumulate minutes
+        GAP_MIN=$(( GAP / 60 ))
+        echo "$(( PREV_WSB + GAP_MIN ))" > "$WSB_FILE" 2>/dev/null
+      fi
+    fi
+  fi
+
+  date +%Y-%m-%dT%H:%M:%S > "$ACTIVITY_FILE" 2>/dev/null
 fi
 
 # Emit a one-shot systemMessage (only when session-managed).
