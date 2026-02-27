@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-md"
-version = "1.2.0" # x-release-please-version
+version = "1.3.0" # x-release-please-version
 description = "A framework for healthy human-agent collaboration"
 readme = "README.md"
 license = "MIT"
