@@ -2121,3 +2121,45 @@ class TestEngagementGapHook:
         assert wsb is not None and wsb > 100, (
             f"gap == threshold should accumulate; got wsb={wsb}, expected > 100"
         )
+
+    def test_single_call_session_creates_wsb_sentinel(self, hook_env):
+        """One-call session must create .work-since-break so end_session doesn't fallback."""
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Single call — no previous activity file exists
+        hook_env["run_hook"](state, activity_epoch=None, wsb=None)
+
+        wsb_file = hook_env["guard_dir"] / f".work-since-break.{hook_env['sid']}"
+        assert wsb_file.exists(), (
+            "single-call session must create wsb sentinel to avoid wall-clock fallback"
+        )
+        assert int(wsb_file.read_text().strip()) == 0
+
+    def test_threshold_clamped_below_min_break(self):
+        """min_activity_gap_seconds >= min_break_seconds → clamped to min_break - 1."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": 900,  # == min_break_seconds, nonsensical
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] < state["min_break_seconds"], (
+            f"threshold ({state['min_activity_gap_seconds']}) must be < "
+            f"min_break_seconds ({state['min_break_seconds']})"
+        )
+
+    def test_threshold_above_min_break_also_clamped(self):
+        """min_activity_gap_seconds > min_break_seconds → also clamped."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": 1200,  # > 900
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] < state["min_break_seconds"]

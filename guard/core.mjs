@@ -658,7 +658,10 @@ export function computeSessionState(config, nowEpoch, tz) {
   }
 
   const minBreakMin = sessions.min_break_minutes || 15;
-  const minActivityGap = sessions.min_activity_gap_seconds || 0;
+  const minBreakSecs = minBreakMin * 60;
+  let minActivityGap = parseInt(sessions.min_activity_gap_seconds, 10) || 0;
+  // Clamp below min_break_seconds (otherwise work never accumulates)
+  if (minActivityGap >= minBreakSecs) minActivityGap = minBreakSecs - 1;
 
   return {
     session_id: randomUUID().replace(/-/g, '').slice(0, 8),

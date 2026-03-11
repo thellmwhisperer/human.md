@@ -55,6 +55,9 @@ if [ -n "$SID" ]; then
         echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null
       fi
     fi
+  else
+    # First tool call in session — initialize wsb sentinel
+    [ ! -f "$WSB_FILE" ] && echo "0" > "$WSB_FILE" 2>/dev/null
   fi
 
   # Store epoch (portable across BSD/GNU — no date format parsing needed)
