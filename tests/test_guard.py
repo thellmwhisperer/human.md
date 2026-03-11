@@ -1851,3 +1851,221 @@ class TestBlockedDays:
         fake_now = datetime(2026, 2, 23, 12, 0)
         result = human_guard.check_schedule(config, fake_now)
         assert result["status"] == "ok"
+
+
+# ===========================================================================
+# 8. Engagement gap — filter autonomous agent tool calls (#9)
+# ===========================================================================
+
+class TestEngagementGapSessionState:
+    """min_activity_gap_seconds in session-state.json."""
+
+    def test_session_state_includes_min_activity_gap_from_config(self):
+        """Config with min_activity_gap_seconds → appears in session state."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": 120,
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 120
+
+    def test_session_state_defaults_min_activity_gap_to_zero(self):
+        """Without min_activity_gap_seconds in config → defaults to 0."""
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(SAMPLE_CONFIG, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
+
+    def test_check_writes_min_activity_gap_to_state_file(self, config_file, session_state_path, session_log_path, tmp_path):
+        """Full --check flow writes min_activity_gap_seconds to session-state.json."""
+        # Config with min_activity_gap_seconds
+        config_with_gap = tmp_path / "human-gap.md"
+        config_with_gap.write_text(
+            SAMPLE_YAML.replace(
+                "min_break_minutes: 15",
+                "min_break_minutes: 15\n  min_activity_gap_seconds: 90"
+            )
+        )
+        human_guard.check(
+            config_paths=[config_with_gap],
+            state_path=session_state_path,
+            log_path=session_log_path,
+            force=False,
+            now=datetime(2026, 2, 22, 12, 0),
+        )
+        state = json.loads(session_state_path.read_text())
+        assert state["min_activity_gap_seconds"] == 90
+
+    def test_yaml_parser_reads_min_activity_gap_seconds(self):
+        """YAML parser picks up min_activity_gap_seconds from config."""
+        yaml_with_gap = SAMPLE_YAML.replace(
+            "min_break_minutes: 15",
+            "min_break_minutes: 15\n  min_activity_gap_seconds: 60"
+        )
+        result = human_guard.parse_yaml(yaml_with_gap)
+        assert result["sessions"]["min_activity_gap_seconds"] == 60
+
+
+class TestEngagementGapHook:
+    """Hook integration: min_activity_gap_seconds filters rapid tool calls."""
+
+    @pytest.fixture
+    def hook_env(self, tmp_path):
+        """Set up isolated environment for hook.sh execution."""
+        import os
+        home = tmp_path / "home"
+        claude_dir = home / ".claude"
+        guard_dir = claude_dir / "human-guard"
+        guard_dir.mkdir(parents=True)
+
+        sid = "test-gap-01"
+        hook_path = Path(__file__).resolve().parent.parent / "guard" / "hook.sh"
+
+        def run_hook(state, activity_epoch=None, wsb=None, env_extra=None):
+            """Run hook.sh with given state and sentinels. Returns wsb after."""
+            state_path = claude_dir / "session-state.json"
+            state_path.write_text(json.dumps(state))
+
+            activity_file = guard_dir / f".activity.{sid}"
+            wsb_file = guard_dir / f".work-since-break.{sid}"
+
+            if activity_epoch is not None:
+                activity_file.write_text(str(activity_epoch))
+            if wsb is not None:
+                wsb_file.write_text(str(wsb))
+
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "HUMAN_GUARD_SESSION_ID": sid,
+            }
+            if env_extra:
+                env.update(env_extra)
+
+            import subprocess
+            result = subprocess.run(
+                ["bash", str(hook_path)],
+                input="{}",  # stdin consumed by hook
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            if wsb_file.exists():
+                return int(wsb_file.read_text().strip())
+            return None
+
+        return {
+            "run_hook": run_hook,
+            "sid": sid,
+            "guard_dir": guard_dir,
+        }
+
+    def _make_state(self, min_activity_gap_seconds=0, **overrides):
+        """Create a minimal session-state.json for hook testing."""
+        import time as t
+        now = int(t.time())
+        state = {
+            "session_id": "test-gap-01",
+            "start_epoch": now - 3600,
+            "max_epoch": now + 3600,
+            "warn_epoch": now + 2880,
+            "wind_down_epoch": 0,
+            "end_allowed_epoch": now + 7200,
+            "min_break_seconds": 900,
+            "min_activity_gap_seconds": min_activity_gap_seconds,
+            "blocked_periods": [],
+            "enforcement": "soft",
+            "messages": {
+                "session_limit": "",
+                "wind_down": "",
+                "blocked_period": "",
+                "break_reminder": "",
+                "outside_hours": "",
+            },
+        }
+        state.update(overrides)
+        return state
+
+    def test_rapid_tool_calls_not_accumulated(self, hook_env):
+        """Gap < min_activity_gap_seconds → work NOT accumulated."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Simulate: previous tool call was 5 seconds ago, wsb=100
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 5, wsb=100)
+
+        assert wsb == 100, (
+            f"rapid tool call (5s gap, threshold 60s) should NOT accumulate; "
+            f"got wsb={wsb}, expected 100"
+        )
+
+    def test_significant_gap_accumulated(self, hook_env):
+        """Gap >= min_activity_gap_seconds → work accumulated."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Simulate: previous tool call was 120 seconds ago, wsb=100
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 120, wsb=100)
+
+        # Should accumulate ~120 seconds
+        assert wsb is not None and wsb > 100, (
+            f"significant gap (120s, threshold 60s) should accumulate; "
+            f"got wsb={wsb}, expected > 100"
+        )
+
+    def test_break_still_resets_with_engagement_gap(self, hook_env):
+        """Gap >= min_break_seconds → break detected (reset), even with engagement gap set."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Simulate: previous tool call was 20 minutes ago, wsb=5000
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 1200, wsb=5000)
+
+        assert wsb == 0, (
+            f"gap >= min_break_seconds should reset work counter; "
+            f"got wsb={wsb}, expected 0"
+        )
+
+    def test_zero_threshold_preserves_current_behavior(self, hook_env):
+        """min_activity_gap_seconds=0 → all gaps accumulated (backward compat)."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=0)
+
+        # Simulate: previous tool call was 5 seconds ago, wsb=100
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 5, wsb=100)
+
+        assert wsb is not None and wsb > 100, (
+            f"threshold=0 should accumulate all gaps (current behavior); "
+            f"got wsb={wsb}, expected > 100"
+        )
+
+    def test_autonomous_sequence_200_calls_minimal_accumulation(self, hook_env):
+        """Simulates 10 rapid tool calls (agent autonomous) — wsb should not grow."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Start with wsb=0, simulate 10 rapid tool calls 3 seconds apart
+        wsb = 0
+        base_epoch = now - 30  # start 30 seconds ago
+        for i in range(10):
+            wsb = hook_env["run_hook"](
+                state,
+                activity_epoch=base_epoch + (i * 3),
+                wsb=wsb,
+            )
+
+        assert wsb == 0, (
+            f"10 rapid tool calls (3s apart, threshold 60s) should not accumulate; "
+            f"got wsb={wsb}, expected 0"
+        )

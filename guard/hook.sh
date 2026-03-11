@@ -41,12 +41,16 @@ if [ -n "$SID" ]; then
     if [ "$PREV_EPOCH" -gt 0 ] 2>/dev/null; then
       GAP=$(( NOW - PREV_EPOCH ))
       MIN_BREAK_SECS=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
+      MIN_ACTIVITY_GAP=$(jq -r '.min_activity_gap_seconds // 0' "$STATE" 2>/dev/null || echo 0)
       PREV_WSB=$(cat "$WSB_FILE" 2>/dev/null || echo 0)
       if [ "$GAP" -ge "$MIN_BREAK_SECS" ]; then
         # Intra-session break detected — reset work counter
         echo "0" > "$WSB_FILE" 2>/dev/null
+      elif [ "$MIN_ACTIVITY_GAP" -gt 0 ] && [ "$GAP" -lt "$MIN_ACTIVITY_GAP" ]; then
+        # Autonomous agent work — gap too short to be human engagement, skip
+        true
       else
-        # Continuous work — accumulate seconds (converted to minutes by endSession)
+        # Human engagement — accumulate seconds (converted to minutes by endSession)
         echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null
       fi
     fi

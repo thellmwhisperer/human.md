@@ -654,6 +654,7 @@ def compute_session_state(config, now_dt, tz):
         })
 
     min_break_min = sessions.get("min_break_minutes", 15)
+    min_activity_gap = sessions.get("min_activity_gap_seconds", 0)
 
     return {
         "session_id": uuid.uuid4().hex[:8],
@@ -663,6 +664,7 @@ def compute_session_state(config, now_dt, tz):
         "wind_down_epoch": wind_down_epoch,
         "end_allowed_epoch": end_epoch,
         "min_break_seconds": min_break_min * 60,
+        "min_activity_gap_seconds": min_activity_gap,
         "blocked_periods": blocked_periods,
         "enforcement": config.get("enforcement", "soft"),
         "messages": {
