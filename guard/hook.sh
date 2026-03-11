@@ -56,6 +56,10 @@ if [ -n "$SID" ]; then
         echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null
         echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
       fi
+    else
+      # Non-numeric sentinel (e.g. ISO timestamp from touch_session) — reinitialize
+      [ ! -f "$WSB_FILE" ] && echo "0" > "$WSB_FILE" 2>/dev/null
+      echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
     fi
   else
     # First tool call in session — initialize wsb sentinel and activity

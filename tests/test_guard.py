@@ -1882,7 +1882,7 @@ class TestEngagementGapSessionState:
         assert state["min_activity_gap_seconds"] == 0
 
     def test_check_writes_min_activity_gap_to_state_file(
-        self, config_file, session_state_path, session_log_path, tmp_path,
+        self, session_state_path, session_log_path, tmp_path,
     ):
         """Full --check flow writes min_activity_gap_seconds to session-state.json."""
         # Config with min_activity_gap_seconds
@@ -1928,7 +1928,10 @@ class TestEngagementGapHook:
         sid = "test-gap-01"
         hook_path = Path(__file__).resolve().parent.parent / "guard" / "hook.sh"
 
-        def run_hook(state, activity_epoch=None, wsb=None, env_extra=None):
+        def run_hook(
+            state, activity_epoch=None, wsb=None, env_extra=None,
+            activity_text=None,
+        ):
             """Run hook.sh with given state and sentinels. Returns wsb after."""
             state_path = claude_dir / "session-state.json"
             state_path.write_text(json.dumps(state))
@@ -1936,7 +1939,9 @@ class TestEngagementGapHook:
             activity_file = guard_dir / f".activity.{sid}"
             wsb_file = guard_dir / f".work-since-break.{sid}"
 
-            if activity_epoch is not None:
+            if activity_text is not None:
+                activity_file.write_text(activity_text)
+            elif activity_epoch is not None:
                 activity_file.write_text(str(activity_epoch))
             if wsb is not None:
                 wsb_file.write_text(str(wsb))
@@ -1950,12 +1955,16 @@ class TestEngagementGapHook:
                 env.update(env_extra)
 
             import subprocess
-            subprocess.run(
+            result = subprocess.run(
                 ["bash", str(hook_path)],
                 input="{}",  # stdin consumed by hook
                 capture_output=True,
                 text=True,
                 env=env,
+            )
+            assert result.returncode == 0, (
+                f"hook.sh exited with {result.returncode}; "
+                f"stderr: {result.stderr}"
             )
 
             if wsb_file.exists():
@@ -1963,10 +1972,14 @@ class TestEngagementGapHook:
             return None
 
         def get_activity_epoch():
-            """Read the current activity sentinel epoch."""
+            """Read the current activity sentinel epoch (None if missing or non-numeric)."""
             activity_file = guard_dir / f".activity.{sid}"
             if activity_file.exists():
-                return int(activity_file.read_text().strip())
+                text = activity_file.read_text().strip()
+                try:
+                    return int(text)
+                except ValueError:
+                    return text  # Return raw for assertion
             return None
 
         return {
@@ -2306,3 +2319,94 @@ class TestEngagementGapHook:
         now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
         state = human_guard.compute_session_state(config, now, tz)
         assert state["min_activity_gap_seconds"] == 0
+
+    def test_infinity_config_coerced_to_zero(self):
+        """min_activity_gap_seconds: float('inf') → should produce 0, not crash.
+
+        CodeRabbit finding: int(float("inf")) raises OverflowError,
+        which is not caught by (TypeError, ValueError).
+        """
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": float("inf"),
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
+
+    def test_string_infinity_config_coerced_to_zero(self):
+        """min_activity_gap_seconds: "inf" → should produce 0, not crash."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": "inf",
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
+
+    def test_nan_config_coerced_to_zero(self):
+        """min_activity_gap_seconds: float('nan') → should produce 0."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": float("nan"),
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
+
+    # --- Finding 2: ISO activity sentinel from touch_session ---
+
+    def test_iso_activity_sentinel_handled_gracefully(self, hook_env):
+        """Activity file with ISO timestamp (from touch_session) must not break hook.
+
+        CodeRabbit finding: touch_session() writes ISO timestamps but the hook
+        expects numeric epochs. The -gt comparison fails silently on ISO strings,
+        skipping gap detection entirely. The hook should reinitialize.
+        """
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Simulate touch_session writing an ISO timestamp
+        iso_timestamp = "2026-02-28T15:30:00+00:00\n"
+        hook_env["run_hook"](state, activity_text=iso_timestamp, wsb=100)
+
+        # The hook should still initialize properly — wsb sentinel must exist
+        wsb_file = (
+            hook_env["guard_dir"]
+            / f".work-since-break.{hook_env['sid']}"
+        )
+        assert wsb_file.exists(), (
+            "hook must handle ISO activity sentinel gracefully "
+            "and maintain wsb sentinel"
+        )
+
+    def test_iso_activity_sentinel_reinitializes_activity(self, hook_env):
+        """After encountering ISO sentinel, hook should write valid epoch."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        iso_timestamp = "2026-02-28T15:30:00+00:00\n"
+        hook_env["run_hook"](state, activity_text=iso_timestamp, wsb=100)
+
+        stored = hook_env["get_activity_epoch"]()
+        assert stored is not None, (
+            "hook should reinitialize activity after encountering ISO sentinel"
+        )
+        # Must be a numeric epoch, not the old ISO string
+        assert isinstance(stored, int), (
+            f"activity should be reinitialized to numeric epoch, "
+            f"got {stored!r} (still ISO?)"
+        )
+        # Must be a reasonable epoch (within last few seconds)
+        assert abs(stored - now) < 10, (
+            f"reinitialized epoch {stored} should be close to now {now}"
+        )

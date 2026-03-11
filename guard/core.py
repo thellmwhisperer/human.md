@@ -659,7 +659,7 @@ def compute_session_state(config, now_dt, tz):
     # Coerce to int (via float for "60.9" parity with parseInt), clamp to valid range
     try:
         min_activity_gap = int(float(raw_gap))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         min_activity_gap = 0
     if min_activity_gap < 0:
         min_activity_gap = 0
