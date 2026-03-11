@@ -660,7 +660,8 @@ export function computeSessionState(config, nowEpoch, tz) {
   const minBreakMin = sessions.min_break_minutes || 15;
   const minBreakSecs = minBreakMin * 60;
   let minActivityGap = parseInt(sessions.min_activity_gap_seconds, 10) || 0;
-  // Clamp below min_break_seconds (otherwise work never accumulates)
+  // Clamp to valid range: non-negative and below min_break_seconds
+  if (minActivityGap < 0) minActivityGap = 0;
   if (minActivityGap >= minBreakSecs) minActivityGap = minBreakSecs - 1;
 
   return {

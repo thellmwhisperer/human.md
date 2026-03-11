@@ -1676,4 +1676,19 @@ describe('Engagement gap (min_activity_gap_seconds)', () => {
     ));
     assert.strictEqual(config.sessions.min_activity_gap_seconds, 60);
   });
+
+  it('negative min_activity_gap_seconds clamped to 0', () => {
+    const config = { ...SAMPLE_CONFIG, sessions: { ...SAMPLE_CONFIG.sessions, min_activity_gap_seconds: -5 } };
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.strictEqual(state.min_activity_gap_seconds, 0);
+  });
+
+  it('min_activity_gap_seconds >= min_break_seconds clamped', () => {
+    const config = { ...SAMPLE_CONFIG, sessions: { ...SAMPLE_CONFIG.sessions, min_activity_gap_seconds: 1200 } };
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.ok(state.min_activity_gap_seconds < state.min_break_seconds,
+      `${state.min_activity_gap_seconds} should be < ${state.min_break_seconds}`);
+  });
 });

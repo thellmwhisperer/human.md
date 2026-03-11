@@ -46,22 +46,22 @@ if [ -n "$SID" ]; then
       if [ "$GAP" -ge "$MIN_BREAK_SECS" ]; then
         # Intra-session break detected — reset work counter
         echo "0" > "$WSB_FILE" 2>/dev/null
+        echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
       elif [ "$MIN_ACTIVITY_GAP" -gt 0 ] && [ "$GAP" -lt "$MIN_ACTIVITY_GAP" ]; then
         # Autonomous agent work — gap too short to be human engagement
-        # Still create sentinel so end_session doesn't fall back to wall-clock
+        # Create wsb sentinel but do NOT update activity (preserve last human interaction)
         [ ! -f "$WSB_FILE" ] && echo "0" > "$WSB_FILE" 2>/dev/null
       else
         # Human engagement — accumulate seconds (converted to minutes by endSession)
         echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null
+        echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
       fi
     fi
   else
-    # First tool call in session — initialize wsb sentinel
+    # First tool call in session — initialize wsb sentinel and activity
     [ ! -f "$WSB_FILE" ] && echo "0" > "$WSB_FILE" 2>/dev/null
+    echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
   fi
-
-  # Store epoch (portable across BSD/GNU — no date format parsing needed)
-  echo "$NOW" > "$ACTIVITY_FILE" 2>/dev/null
 fi
 
 # Emit a one-shot systemMessage (only when session-managed).

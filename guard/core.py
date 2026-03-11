@@ -656,10 +656,12 @@ def compute_session_state(config, now_dt, tz):
     min_break_min = sessions.get("min_break_minutes", 15)
     min_break_secs = min_break_min * 60
     raw_gap = sessions.get("min_activity_gap_seconds", 0)
-    # Ensure it's an int and stays below min_break_seconds (otherwise work never accumulates)
+    # Coerce to int (via float for "60.9" parity with parseInt), clamp to valid range
     try:
-        min_activity_gap = int(raw_gap)
+        min_activity_gap = int(float(raw_gap))
     except (TypeError, ValueError):
+        min_activity_gap = 0
+    if min_activity_gap < 0:
         min_activity_gap = 0
     if min_activity_gap >= min_break_secs:
         min_activity_gap = min_break_secs - 1

@@ -1960,8 +1960,16 @@ class TestEngagementGapHook:
                 return int(wsb_file.read_text().strip())
             return None
 
+        def get_activity_epoch():
+            """Read the current activity sentinel epoch."""
+            activity_file = guard_dir / f".activity.{sid}"
+            if activity_file.exists():
+                return int(activity_file.read_text().strip())
+            return None
+
         return {
             "run_hook": run_hook,
+            "get_activity_epoch": get_activity_epoch,
             "sid": sid,
             "guard_dir": guard_dir,
         }
@@ -2163,3 +2171,136 @@ class TestEngagementGapHook:
         now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
         state = human_guard.compute_session_state(config, now, tz)
         assert state["min_activity_gap_seconds"] < state["min_break_seconds"]
+
+    # --- Fix 1: autonomous calls must NOT update last_activity ---
+
+    def test_autonomous_call_does_not_update_activity(self, hook_env):
+        """Autonomous tool call (gap < threshold) must not update .activity sentinel."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        human_epoch = now - 10  # human's last message was 10s ago
+        hook_env["run_hook"](state, activity_epoch=human_epoch, wsb=0)
+
+        stored = hook_env["get_activity_epoch"]()
+        assert stored == human_epoch, (
+            f"autonomous call should NOT update activity; "
+            f"expected {human_epoch}, got {stored}"
+        )
+
+    def test_human_engagement_does_update_activity(self, hook_env):
+        """Human engagement (gap >= threshold) must update .activity sentinel."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        old_epoch = now - 120  # last interaction 2 min ago
+        hook_env["run_hook"](state, activity_epoch=old_epoch, wsb=0)
+
+        stored = hook_env["get_activity_epoch"]()
+        assert stored != old_epoch and stored > old_epoch, (
+            f"human engagement should update activity; "
+            f"still has old value {stored}"
+        )
+
+    def test_break_detection_updates_activity(self, hook_env):
+        """Break detection (gap >= min_break) must update .activity sentinel."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        old_epoch = now - 1200  # 20 min gap → break
+        hook_env["run_hook"](state, activity_epoch=old_epoch, wsb=5000)
+
+        stored = hook_env["get_activity_epoch"]()
+        assert stored != old_epoch and stored > old_epoch, (
+            "break detection should update activity"
+        )
+
+    def test_autonomous_session_gives_break_credit(self, session_log_path):
+        """200min work + 2h autonomous → check_break should give break credit.
+
+        Because last_activity reflects last HUMAN interaction (not agent),
+        the 2h autonomous session should let break time accumulate.
+        """
+        now = datetime(2026, 2, 28, 1, 0)
+        data = {"sessions": [
+            {
+                "id": "work-session",
+                "start_time": "2026-02-27T20:00:00",
+                "end_time": "2026-02-27T23:20:00",
+                "last_activity": "2026-02-27T23:19:00",
+                "work_since_break": 200,
+            },
+            {
+                "id": "autonomous-session",
+                "start_time": "2026-02-27T23:20:00",
+                "end_time": "2026-02-28T01:00:00",
+                # last_activity reflects HUMAN interaction at session start,
+                # NOT the last agent tool call
+                "last_activity": "2026-02-27T23:21:00",
+                "work_since_break": 0,
+            },
+        ]}
+        session_log_path.write_text(json.dumps(data))
+
+        result = human_guard.check_break(session_log_path, 15, now=now, max_continuous_minutes=150)
+        assert result["ok"], (
+            f"2h autonomous session with correct last_activity should give break credit; "
+            f"got minutes_left={result['minutes_left']}"
+        )
+
+    # --- Fix 2: Python/Node parity for non-integer config values ---
+
+    def test_float_config_coerced_to_int(self):
+        """min_activity_gap_seconds: 60.9 → should produce 60 (not 0)."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": 60.9,
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 60
+
+    def test_string_float_config_coerced_to_int(self):
+        """min_activity_gap_seconds: "60.9" → should produce 60."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": "60.9",
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 60
+
+    def test_negative_config_coerced_to_zero(self):
+        """min_activity_gap_seconds: -5 → should produce 0."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": -5,
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
+
+    def test_invalid_string_config_coerced_to_zero(self):
+        """min_activity_gap_seconds: "oops" → should produce 0."""
+        from zoneinfo import ZoneInfo
+        config = {**SAMPLE_CONFIG, "sessions": {
+            "max_continuous_minutes": 150,
+            "min_break_minutes": 15,
+            "min_activity_gap_seconds": "oops",
+        }}
+        tz = ZoneInfo("Europe/London")
+        now = datetime(2026, 2, 27, 15, 0, tzinfo=tz)
+        state = human_guard.compute_session_state(config, now, tz)
+        assert state["min_activity_gap_seconds"] == 0
