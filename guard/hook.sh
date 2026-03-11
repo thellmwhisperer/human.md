@@ -47,8 +47,9 @@ if [ -n "$SID" ]; then
         # Intra-session break detected — reset work counter
         echo "0" > "$WSB_FILE" 2>/dev/null
       elif [ "$MIN_ACTIVITY_GAP" -gt 0 ] && [ "$GAP" -lt "$MIN_ACTIVITY_GAP" ]; then
-        # Autonomous agent work — gap too short to be human engagement, skip
-        true
+        # Autonomous agent work — gap too short to be human engagement
+        # Still create sentinel so end_session doesn't fall back to wall-clock
+        [ ! -f "$WSB_FILE" ] && echo "0" > "$WSB_FILE" 2>/dev/null
       else
         # Human engagement — accumulate seconds (converted to minutes by endSession)
         echo "$(( PREV_WSB + GAP ))" > "$WSB_FILE" 2>/dev/null

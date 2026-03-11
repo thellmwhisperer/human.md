@@ -2069,3 +2069,55 @@ class TestEngagementGapHook:
             f"10 rapid tool calls (3s apart, threshold 60s) should not accumulate; "
             f"got wsb={wsb}, expected 0"
         )
+
+    def test_fresh_session_no_sentinel_creates_wsb_zero(self, hook_env):
+        """Bug: all-autonomous session must still create .work-since-break sentinel.
+
+        Without it, end_session falls back to wall-clock and overcounts.
+        """
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # First call ever — no activity file, no wsb file
+        wsb = hook_env["run_hook"](state, activity_epoch=None, wsb=None)
+
+        # After the first call, no accumulation happens (no previous epoch).
+        # Second rapid call — should skip accumulation AND create the sentinel.
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 3, wsb=None)
+
+        assert wsb is not None and wsb == 0, (
+            f"rapid call on fresh session should create wsb sentinel with 0; "
+            f"got wsb={wsb}"
+        )
+
+    def test_all_autonomous_session_wsb_stays_zero(self, hook_env):
+        """Full session of only autonomous calls — wsb sentinel must exist with 0."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Simulate 5 rapid calls, never pre-seeding wsb
+        base = now - 15
+        for i in range(5):
+            hook_env["run_hook"](state, activity_epoch=base + (i * 3), wsb=None)
+
+        # Check sentinel file directly
+        wsb_file = hook_env["guard_dir"] / f".work-since-break.{hook_env['sid']}"
+        assert wsb_file.exists(), "wsb sentinel must exist after autonomous-only session"
+        assert int(wsb_file.read_text().strip()) == 0, (
+            "wsb sentinel should be 0 for all-autonomous session"
+        )
+
+    def test_gap_equals_threshold_accumulated(self, hook_env):
+        """Gap == min_activity_gap_seconds → should accumulate (boundary)."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(min_activity_gap_seconds=60)
+
+        # Gap exactly 60s, threshold 60s — should accumulate
+        wsb = hook_env["run_hook"](state, activity_epoch=now - 60, wsb=100)
+
+        assert wsb is not None and wsb > 100, (
+            f"gap == threshold should accumulate; got wsb={wsb}, expected > 100"
+        )
