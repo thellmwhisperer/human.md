@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0](https://github.com/thellmwhisperer/human.md/compare/human-md-v1.3.0...human-md-v1.4.0) (2026-03-11)
+
+
+### Features
+
+* engagement gap to filter autonomous agent tool calls ([#10](https://github.com/thellmwhisperer/human.md/issues/10)) ([307b9e8](https://github.com/thellmwhisperer/human.md/commit/307b9e88991829a7931f9dc10568525bc7059684))
+
 ## [1.3.0](https://github.com/thellmwhisperer/human.md/compare/human-md-v1.2.0...human-md-v1.3.0) (2026-02-27)
 
 
