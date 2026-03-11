@@ -1881,7 +1881,9 @@ class TestEngagementGapSessionState:
         state = human_guard.compute_session_state(SAMPLE_CONFIG, now, tz)
         assert state["min_activity_gap_seconds"] == 0
 
-    def test_check_writes_min_activity_gap_to_state_file(self, config_file, session_state_path, session_log_path, tmp_path):
+    def test_check_writes_min_activity_gap_to_state_file(
+        self, config_file, session_state_path, session_log_path, tmp_path,
+    ):
         """Full --check flow writes min_activity_gap_seconds to session-state.json."""
         # Config with min_activity_gap_seconds
         config_with_gap = tmp_path / "human-gap.md"
@@ -1948,7 +1950,7 @@ class TestEngagementGapHook:
                 env.update(env_extra)
 
             import subprocess
-            result = subprocess.run(
+            subprocess.run(
                 ["bash", str(hook_path)],
                 input="{}",  # stdin consumed by hook
                 capture_output=True,
