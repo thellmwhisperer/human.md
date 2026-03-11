@@ -103,6 +103,41 @@ enforcement: soft
 
 See [examples/](examples/) for more configurations and [spec/SPEC.md](spec/SPEC.md) for the full specification.
 
+### Async-heavy users
+
+If you work as "architect and oversee" — sending a few high-level messages while the agent runs long autonomous sequences — the default work timer will overcount your engagement. Rapid-fire agent tool calls look like continuous human work even when you're away from the keyboard.
+
+Set `min_activity_gap_seconds` to filter out autonomous activity. Only gaps at or above the threshold (suggesting you came back and sent a new message) count as work time:
+
+```yaml
+sessions:
+  max_continuous_minutes: 150
+  min_break_minutes: 15
+  min_activity_gap_seconds: 60   # ignore gaps under 60s (agent autonomy)
+```
+
+Default is `0` (every gap counts — the right setting for hands-on coding). The value is automatically clamped below `min_break_minutes × 60` — setting it higher would prevent any work from being tracked.
+
+### Blocked periods beyond health
+
+`blocked_periods` aren't limited to family time or lunch. They're equally useful for protecting strategic work — deep writing, architecture, planning — from the pull of reactive coding:
+
+```yaml
+schedule:
+  allowed_hours:
+    start: "09:00"
+    end: "00:00"
+  blocked_periods:
+    - name: "family"
+      start: "18:00"
+      end: "21:00"
+    - name: "deep writing"
+      start: "09:00"
+      end: "12:00"
+```
+
+"Tuesday/Thursday mornings are writing-only, Claude Code doesn't launch" is a valid and supported configuration. The wrapper will refuse to start a session during those hours, just as it would during family time.
+
 ## Two Layers of Enforcement
 
 When installed with `install.sh`, human-guard enforces boundaries at two levels:

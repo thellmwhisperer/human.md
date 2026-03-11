@@ -654,6 +654,17 @@ def compute_session_state(config, now_dt, tz):
         })
 
     min_break_min = sessions.get("min_break_minutes", 15)
+    min_break_secs = min_break_min * 60
+    raw_gap = sessions.get("min_activity_gap_seconds", 0)
+    # Coerce to int (via float for "60.9" parity with parseInt), clamp to valid range
+    try:
+        min_activity_gap = int(float(raw_gap))
+    except (TypeError, ValueError, OverflowError):
+        min_activity_gap = 0
+    if min_activity_gap < 0:
+        min_activity_gap = 0
+    if min_activity_gap >= min_break_secs:
+        min_activity_gap = min_break_secs - 1
 
     return {
         "session_id": uuid.uuid4().hex[:8],
@@ -663,6 +674,7 @@ def compute_session_state(config, now_dt, tz):
         "wind_down_epoch": wind_down_epoch,
         "end_allowed_epoch": end_epoch,
         "min_break_seconds": min_break_min * 60,
+        "min_activity_gap_seconds": min_activity_gap,
         "blocked_periods": blocked_periods,
         "enforcement": config.get("enforcement", "soft"),
         "messages": {

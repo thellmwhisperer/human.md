@@ -1645,3 +1645,50 @@ describe('Intra-session breaks', () => {
       '30s = 0.5min should round to 1 (Math.round rounds .5 up)');
   });
 });
+
+
+// ===========================================================================
+// 8. Engagement gap — filter autonomous agent tool calls (#9)
+// ===========================================================================
+
+describe('Engagement gap (min_activity_gap_seconds)', () => {
+  it('computeSessionState includes min_activity_gap_seconds from config', () => {
+    const config = parseYaml(SAMPLE_YAML.replace(
+      'min_break_minutes: 15',
+      'min_break_minutes: 15\n  min_activity_gap_seconds: 120'
+    ));
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.strictEqual(state.min_activity_gap_seconds, 120);
+  });
+
+  it('computeSessionState defaults min_activity_gap_seconds to 0', () => {
+    const config = parseYaml(SAMPLE_YAML);
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.strictEqual(state.min_activity_gap_seconds, 0);
+  });
+
+  it('YAML parser reads min_activity_gap_seconds', () => {
+    const config = parseYaml(SAMPLE_YAML.replace(
+      'min_break_minutes: 15',
+      'min_break_minutes: 15\n  min_activity_gap_seconds: 60'
+    ));
+    assert.strictEqual(config.sessions.min_activity_gap_seconds, 60);
+  });
+
+  it('negative min_activity_gap_seconds clamped to 0', () => {
+    const config = { ...SAMPLE_CONFIG, sessions: { ...SAMPLE_CONFIG.sessions, min_activity_gap_seconds: -5 } };
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.strictEqual(state.min_activity_gap_seconds, 0);
+  });
+
+  it('min_activity_gap_seconds >= min_break_seconds clamped', () => {
+    const config = { ...SAMPLE_CONFIG, sessions: { ...SAMPLE_CONFIG.sessions, min_activity_gap_seconds: 1200 } };
+    const now = Math.floor(fakeNow(2026, 2, 27, 15, 0).getTime() / 1000);
+    const state = computeSessionState(config, now, 'Europe/London');
+    assert.ok(state.min_activity_gap_seconds < state.min_break_seconds,
+      `${state.min_activity_gap_seconds} should be < ${state.min_break_seconds}`);
+  });
+});

@@ -658,6 +658,11 @@ export function computeSessionState(config, nowEpoch, tz) {
   }
 
   const minBreakMin = sessions.min_break_minutes || 15;
+  const minBreakSecs = minBreakMin * 60;
+  let minActivityGap = parseInt(sessions.min_activity_gap_seconds, 10) || 0;
+  // Clamp to valid range: non-negative and below min_break_seconds
+  if (minActivityGap < 0) minActivityGap = 0;
+  if (minActivityGap >= minBreakSecs) minActivityGap = minBreakSecs - 1;
 
   return {
     session_id: randomUUID().replace(/-/g, '').slice(0, 8),
@@ -667,6 +672,7 @@ export function computeSessionState(config, nowEpoch, tz) {
     wind_down_epoch: windDownEpoch,
     end_allowed_epoch: endEpoch,
     min_break_seconds: minBreakMin * 60,
+    min_activity_gap_seconds: minActivityGap,
     blocked_periods: blockedPeriods,
     enforcement: config.enforcement || 'soft',
     messages: {
