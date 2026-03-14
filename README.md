@@ -6,6 +6,15 @@
 
 **A framework for healthy human-agent collaboration.**
 
+> **See it in action:**
+> [I Got Addicted to Claude Code. Here's My Fix.](https://youtu.be/YBEtPBBe3YA) |
+> [I Made Claude Code Mentor My Junior Devs](https://youtu.be/Lw8BunLraW4) |
+> [The LLM Whisperer](https://youtube.com/@thellmwhisperer)
+>
+> Used in production: [land-registry-nlq](https://github.com/thellmwhisperer/land-registry-nlq) — NL-to-SQL with 6 security layers, built live on YouTube
+
+If you find this useful, please ⭐ the repo — it helps others discover it.
+
 `human.md` is a configuration file you place in your repository to tell AI coding agents how to treat you — the human. It defines when you should be working, how long your sessions should last, and when the agent should encourage you to stop.
 
 Just as `CLAUDE.md` tells Claude Code how to work on your project, `human.md` tells Claude Code how to work *with you*.
@@ -229,3 +238,7 @@ MIT — Use it. Share it. Protect yourself.
 ---
 
 *"The best AI assistant is one that knows when to stop assisting."*
+
+---
+
+Built by [@TheLLMWhisperer](https://youtube.com/@thellmwhisperer) · [Twitter](https://x.com/TheLLMWhisperer) · [LinkedIn](https://linkedin.com/in/javiermellado)
