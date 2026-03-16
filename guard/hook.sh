@@ -14,7 +14,7 @@ STATE="$HOME/.claude/session-state.json"
 NOW=$(date +%s)
 
 # Read thresholds safely — no eval, one jq call for numeric values
-VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length), (.start_epoch // 0), (.session_id // ""), (.min_break_seconds // 900), (.min_activity_gap_seconds // 0)] | @tsv' "$STATE" 2>/dev/null) || exit 0
+VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length), (.start_epoch // 0), (.session_id // "-"), (.min_break_seconds // 900), (.min_activity_gap_seconds // 0)] | @tsv' "$STATE" 2>/dev/null) || exit 0
 read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT START_EPOCH STATE_SID MIN_BREAK_SECS MIN_ACTIVITY_GAP <<< "$VALS"
 
 # If jq failed or values empty, bail gracefully
@@ -26,7 +26,8 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT STAR
 # Falls back to session_id from session-state.json when wrapper didn't set env var
 # (e.g., Claude launched from IDE or via `command claude`).
 NOTIFY_DIR="$HOME/.claude/human-guard"
-SID="${HUMAN_GUARD_SESSION_ID:-$STATE_SID}"
+SID="${HUMAN_GUARD_SESSION_ID:-}"
+[ -z "$SID" ] && [ "$STATE_SID" != "-" ] && SID="$STATE_SID"
 
 # Touch session activity + detect intra-session breaks
 if [ -n "$SID" ]; then
