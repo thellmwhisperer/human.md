@@ -2629,3 +2629,6 @@ class TestStaleStateAndSidFallback:
         assert rc == 0, (
             f"stale state should not hard-block via blocked_period; got exit {rc}"
         )
+        assert stdout == "", (
+            f"stale state should produce no output, got: {stdout!r}"
+        )
