@@ -2559,10 +2559,12 @@ class TestStaleStateAndSidFallback:
             end_allowed_epoch=now + 3600,
             min_break_seconds=900,
         )
-        stdout1, _ = hook_env["run_hook"](state, sid=None)
+        stdout1, rc1 = hook_env["run_hook"](state, sid=None)
+        assert rc1 == 0
         assert "Llevas 2h30" in stdout1
 
-        stdout2, _ = hook_env["run_hook"](state, sid=None)
+        stdout2, rc2 = hook_env["run_hook"](state, sid=None)
+        assert rc2 == 0
         assert stdout2 == "", (
             f"second call should be suppressed by _notify_once, got: {stdout2!r}"
         )
@@ -2579,7 +2581,8 @@ class TestStaleStateAndSidFallback:
             end_allowed_epoch=now + 3600,
             min_break_seconds=900,
         )
-        stdout1, _ = hook_env["run_hook"](state, sid="env-sid-01")
+        stdout1, rc1 = hook_env["run_hook"](state, sid="env-sid-01")
+        assert rc1 == 0
         assert "Llevas 2h30" in stdout1
 
         marker_env = hook_env["guard_dir"] / ".notified.session_limit.env-sid-01"
@@ -2587,7 +2590,8 @@ class TestStaleStateAndSidFallback:
         assert marker_env.exists(), "marker should use env SID"
         assert not marker_state.exists(), "marker should NOT use state session_id"
 
-        stdout2, _ = hook_env["run_hook"](state, sid="env-sid-01")
+        stdout2, rc2 = hook_env["run_hook"](state, sid="env-sid-01")
+        assert rc2 == 0
         assert stdout2 == ""
 
     # --- Staleness guard must precede blocking checks ---
