@@ -14,8 +14,8 @@ STATE="$HOME/.claude/session-state.json"
 NOW=$(date +%s)
 
 # Read thresholds safely — no eval, one jq call for numeric values
-VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length), (.start_epoch // 0), (.session_id // "")] | @tsv' "$STATE" 2>/dev/null) || exit 0
-read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT START_EPOCH STATE_SID <<< "$VALS"
+VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length), (.start_epoch // 0), (.session_id // ""), (.min_break_seconds // 900), (.min_activity_gap_seconds // 0)] | @tsv' "$STATE" 2>/dev/null) || exit 0
+read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT START_EPOCH STATE_SID MIN_BREAK_SECS MIN_ACTIVITY_GAP <<< "$VALS"
 
 # If jq failed or values empty, bail gracefully
 [ -z "$MAX_EPOCH" ] && exit 0
@@ -40,8 +40,6 @@ if [ -n "$SID" ]; then
     PREV_EPOCH=$(cat "$ACTIVITY_FILE" 2>/dev/null || echo 0)
     if [ "$PREV_EPOCH" -gt 0 ] 2>/dev/null; then
       GAP=$(( NOW - PREV_EPOCH ))
-      MIN_BREAK_SECS=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
-      MIN_ACTIVITY_GAP=$(jq -r '.min_activity_gap_seconds // 0' "$STATE" 2>/dev/null || echo 0)
       PREV_WSB=$(cat "$WSB_FILE" 2>/dev/null || echo 0)
       if [ "$GAP" -ge "$MIN_BREAK_SECS" ]; then
         # Intra-session break detected — reset work counter
@@ -84,8 +82,7 @@ _notify_once() {
 # previous session that has ended — skip ALL enforcement (including blocking checks).
 # Must run before blocked_periods/outside_hours to avoid hard-blocking with stale epochs.
 if [ "$NOW" -ge "$MAX_EPOCH" ] && [ "$START_EPOCH" -gt 0 ] 2>/dev/null; then
-  MIN_BREAK_STALE=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
-  STALE_LIMIT=$(( MAX_EPOCH + MIN_BREAK_STALE ))
+  STALE_LIMIT=$(( MAX_EPOCH + MIN_BREAK_SECS ))
   [ "$NOW" -ge "$STALE_LIMIT" ] && exit 0
 fi
 
