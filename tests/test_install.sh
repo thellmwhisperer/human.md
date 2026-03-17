@@ -731,6 +731,8 @@ test_hook_no_sid_no_suppression() {
 }
 JSON
   # First call without SID: emits
+  # Explicitly unset to avoid inheriting from an active wrapper session
+  unset HUMAN_GUARD_SESSION_ID
   local out1
   out1=$(echo '{}' | bash "$HOME/.claude/human-guard/hook.sh" 2>/dev/null)
   echo "$out1" | jq -e '.systemMessage' > /dev/null

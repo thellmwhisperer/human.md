@@ -2410,3 +2410,229 @@ class TestEngagementGapHook:
         assert abs(stored - now) < 10, (
             f"reinitialized epoch {stored} should be close to now {now}"
         )
+
+
+# ===========================================================================
+# 9. Stale session-state guard & SID fallback
+# ===========================================================================
+
+class TestStaleStateAndSidFallback:
+    """Hook integration: stale session-state detection and SID fallback."""
+
+    @pytest.fixture
+    def hook_env(self, tmp_path):
+        """Isolated hook environment with full stdout capture and no-SID support."""
+        import os
+        home = tmp_path / "home"
+        claude_dir = home / ".claude"
+        guard_dir = claude_dir / "human-guard"
+        guard_dir.mkdir(parents=True)
+
+        hook_path = Path(__file__).resolve().parent.parent / "guard" / "hook.sh"
+
+        def run_hook(state, sid=None, env_extra=None):
+            """Run hook.sh and return (stdout, returncode).
+
+            If sid is None, HUMAN_GUARD_SESSION_ID is NOT set (simulates
+            Claude launched outside the wrapper).
+            """
+            state_path = claude_dir / "session-state.json"
+            state_path.write_text(json.dumps(state))
+
+            env = {**os.environ, "HOME": str(home)}
+            if sid is not None:
+                env["HUMAN_GUARD_SESSION_ID"] = sid
+            else:
+                env.pop("HUMAN_GUARD_SESSION_ID", None)
+            if env_extra:
+                env.update(env_extra)
+
+            import subprocess
+            result = subprocess.run(
+                ["bash", str(hook_path)],
+                input="{}",
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            return result.stdout.strip(), result.returncode
+
+        return {
+            "run_hook": run_hook,
+            "guard_dir": guard_dir,
+        }
+
+    def _make_state(self, **overrides):
+        """Create minimal session-state with configurable epochs."""
+        import time as t
+        now = int(t.time())
+        state = {
+            "session_id": "state-sid-01",
+            "start_epoch": now - 3600,
+            "max_epoch": now + 3600,
+            "warn_epoch": now + 2880,
+            "wind_down_epoch": 0,
+            "end_allowed_epoch": now + 7200,
+            "min_break_seconds": 900,
+            "min_activity_gap_seconds": 0,
+            "blocked_periods": [],
+            "enforcement": "soft",
+            "messages": {
+                "session_limit": "Llevas 2h30.",
+                "wind_down": "",
+                "blocked_period": "",
+                "break_reminder": "",
+                "outside_hours": "",
+            },
+        }
+        state.update(overrides)
+        return state
+
+    # --- Staleness guard ---
+
+    def test_stale_session_state_no_output(self, hook_env):
+        """Past max_epoch + min_break → stale state → no message, exit 0."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            start_epoch=now - 14400,
+            max_epoch=now - 5400,
+            warn_epoch=now - 7200,
+            end_allowed_epoch=now + 3600,
+            min_break_seconds=900,
+        )
+        stdout, rc = hook_env["run_hook"](state, sid="active-sid")
+        assert rc == 0
+        assert stdout == "", (
+            f"stale session-state should produce no output, got: {stdout!r}"
+        )
+
+    def test_fresh_over_limit_still_fires(self, hook_env):
+        """Just past max_epoch but within min_break window → session_limit fires."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            start_epoch=now - 9300,
+            max_epoch=now - 300,
+            warn_epoch=now - 2100,
+            end_allowed_epoch=now + 3600,
+            min_break_seconds=900,
+        )
+        stdout, rc = hook_env["run_hook"](state, sid="active-sid")
+        assert rc == 0
+        assert "Llevas 2h30" in stdout, (
+            "session_limit should fire when just past max_epoch"
+        )
+
+    # --- SID fallback ---
+
+    def test_no_sid_env_falls_back_to_state_session_id(self, hook_env):
+        """Without HUMAN_GUARD_SESSION_ID, notification marker uses state's session_id."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            session_id="fallback-sid-99",
+            start_epoch=now - 9300,
+            max_epoch=now - 300,
+            warn_epoch=now - 2100,
+            end_allowed_epoch=now + 3600,
+            min_break_seconds=900,
+        )
+        stdout, rc = hook_env["run_hook"](state, sid=None)
+        assert rc == 0
+        assert "Llevas 2h30" in stdout
+
+        marker = hook_env["guard_dir"] / ".notified.session_limit.fallback-sid-99"
+        assert marker.exists(), (
+            "notification marker should use session_id from session-state.json"
+        )
+
+    def test_no_sid_notification_fires_once_not_every_call(self, hook_env):
+        """Two calls without SID env → message only on first call."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            session_id="dedup-test-01",
+            start_epoch=now - 9300,
+            max_epoch=now - 300,
+            warn_epoch=now - 2100,
+            end_allowed_epoch=now + 3600,
+            min_break_seconds=900,
+        )
+        stdout1, rc1 = hook_env["run_hook"](state, sid=None)
+        assert rc1 == 0
+        assert "Llevas 2h30" in stdout1
+
+        stdout2, rc2 = hook_env["run_hook"](state, sid=None)
+        assert rc2 == 0
+        assert stdout2 == "", (
+            f"second call should be suppressed by _notify_once, got: {stdout2!r}"
+        )
+
+    def test_with_sid_env_still_works(self, hook_env):
+        """With HUMAN_GUARD_SESSION_ID set, behavior unchanged."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            session_id="state-sid-xx",
+            start_epoch=now - 9300,
+            max_epoch=now - 300,
+            warn_epoch=now - 2100,
+            end_allowed_epoch=now + 3600,
+            min_break_seconds=900,
+        )
+        stdout1, rc1 = hook_env["run_hook"](state, sid="env-sid-01")
+        assert rc1 == 0
+        assert "Llevas 2h30" in stdout1
+
+        marker_env = hook_env["guard_dir"] / ".notified.session_limit.env-sid-01"
+        marker_state = hook_env["guard_dir"] / ".notified.session_limit.state-sid-xx"
+        assert marker_env.exists(), "marker should use env SID"
+        assert not marker_state.exists(), "marker should NOT use state session_id"
+
+        stdout2, rc2 = hook_env["run_hook"](state, sid="env-sid-01")
+        assert rc2 == 0
+        assert stdout2 == ""
+
+    # --- Staleness guard must precede blocking checks ---
+
+    def test_stale_outside_hours_does_not_block(self, hook_env):
+        """Stale state with end_allowed_epoch in the past must NOT exit 2."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            start_epoch=now - 14400,
+            max_epoch=now - 5400,
+            warn_epoch=now - 7200,
+            end_allowed_epoch=now - 3600,
+            min_break_seconds=900,
+        )
+        stdout, rc = hook_env["run_hook"](state, sid="active-sid")
+        assert rc == 0, (
+            f"stale state should not hard-block; got exit {rc}"
+        )
+        assert stdout == ""
+
+    def test_stale_blocked_period_does_not_block(self, hook_env):
+        """Stale state with active blocked_period must NOT exit 2."""
+        import time as t
+        now = int(t.time())
+        state = self._make_state(
+            start_epoch=now - 14400,
+            max_epoch=now - 5400,
+            warn_epoch=now - 7200,
+            end_allowed_epoch=now + 7200,
+            min_break_seconds=900,
+            blocked_periods=[{
+                "name": "family",
+                "start_epoch": now - 3600,
+                "end_epoch": now + 3600,
+            }],
+        )
+        stdout, rc = hook_env["run_hook"](state, sid="active-sid")
+        assert rc == 0, (
+            f"stale state should not hard-block via blocked_period; got exit {rc}"
+        )
+        assert stdout == "", (
+            f"stale state should produce no output, got: {stdout!r}"
+        )

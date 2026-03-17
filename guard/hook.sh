@@ -14,8 +14,8 @@ STATE="$HOME/.claude/session-state.json"
 NOW=$(date +%s)
 
 # Read thresholds safely — no eval, one jq call for numeric values
-VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length)] | @tsv' "$STATE" 2>/dev/null) || exit 0
-read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< "$VALS"
+VALS=$(jq -r '[.max_epoch, .warn_epoch, (.wind_down_epoch // 0), .end_allowed_epoch, .enforcement, (.blocked_periods | length), (.start_epoch // 0), (.session_id // "-"), (.min_break_seconds // 900), (.min_activity_gap_seconds // 0)] | @tsv' "$STATE" 2>/dev/null) || exit 0
+read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT START_EPOCH STATE_SID MIN_BREAK_SECS MIN_ACTIVITY_GAP <<< "$VALS"
 
 # If jq failed or values empty, bail gracefully
 [ -z "$MAX_EPOCH" ] && exit 0
@@ -23,10 +23,11 @@ read -r MAX_EPOCH WARN_EPOCH WIND_DOWN_EPOCH END_EPOCH ENFORCEMENT BP_COUNT <<< 
 # --- One-shot notification helpers ---
 # Marker files prevent the same informational message from firing on every tool use.
 # Scoped by session ID so multiple terminals don't interfere with each other.
-# Only active when launched via the wrapper (HUMAN_GUARD_SESSION_ID set).
-# Without a managed session, notifications fire every time (legacy behavior).
+# Falls back to session_id from session-state.json when wrapper didn't set env var
+# (e.g., Claude launched from IDE or via `command claude`).
 NOTIFY_DIR="$HOME/.claude/human-guard"
 SID="${HUMAN_GUARD_SESSION_ID:-}"
+[ -z "$SID" ] && [ "$STATE_SID" != "-" ] && SID="$STATE_SID"
 
 # Touch session activity + detect intra-session breaks
 if [ -n "$SID" ]; then
@@ -40,8 +41,6 @@ if [ -n "$SID" ]; then
     PREV_EPOCH=$(cat "$ACTIVITY_FILE" 2>/dev/null || echo 0)
     if [ "$PREV_EPOCH" -gt 0 ] 2>/dev/null; then
       GAP=$(( NOW - PREV_EPOCH ))
-      MIN_BREAK_SECS=$(jq -r '.min_break_seconds // 900' "$STATE" 2>/dev/null || echo 900)
-      MIN_ACTIVITY_GAP=$(jq -r '.min_activity_gap_seconds // 0' "$STATE" 2>/dev/null || echo 0)
       PREV_WSB=$(cat "$WSB_FILE" 2>/dev/null || echo 0)
       if [ "$GAP" -ge "$MIN_BREAK_SECS" ]; then
         # Intra-session break detected — reset work counter
@@ -68,8 +67,8 @@ if [ -n "$SID" ]; then
   fi
 fi
 
-# Emit a one-shot systemMessage (only when session-managed).
-# Without SID, always emits (no suppression).
+# Emit a one-shot systemMessage.
+# SID comes from wrapper env var or session-state.json fallback.
 # Uses mkdir for atomic check+create (POSIX guarantee: mkdir fails if exists).
 _notify_once() {
   local key="$1" msg="$2"
@@ -79,6 +78,14 @@ _notify_once() {
   jq -n --arg msg "$msg" '{"systemMessage": $msg}'
   return 0
 }
+
+# Stale session-state guard: if past max_epoch + min_break, the state is from a
+# previous session that has ended — skip ALL enforcement (including blocking checks).
+# Must run before blocked_periods/outside_hours to avoid hard-blocking with stale epochs.
+if [ "$NOW" -ge "$MAX_EPOCH" ] && [ "$START_EPOCH" -gt 0 ] 2>/dev/null; then
+  STALE_LIMIT=$(( MAX_EPOCH + MIN_BREAK_SECS ))
+  [ "$NOW" -ge "$STALE_LIMIT" ] && exit 0
+fi
 
 # Check blocked periods
 if [ "$BP_COUNT" -gt 0 ] 2>/dev/null; then
