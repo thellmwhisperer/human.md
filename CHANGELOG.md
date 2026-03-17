@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.1](https://github.com/thellmwhisperer/human.md/compare/human-md-v1.4.0...human-md-v1.4.1) (2026-03-17)
+
+
+### Bug Fixes
+
+* stale session-state guard + SID fallback for _notify_once ([#13](https://github.com/thellmwhisperer/human.md/issues/13)) ([5501713](https://github.com/thellmwhisperer/human.md/commit/5501713269c7a346dc6cbe870e7eb6fe81c4c670))
+
 ## [1.4.0](https://github.com/thellmwhisperer/human.md/compare/human-md-v1.3.0...human-md-v1.4.0) (2026-03-11)
 
 
